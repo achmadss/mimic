@@ -7,6 +7,8 @@ export class TelegramAdapter implements DeliveryAdapter {
   readonly platform = "telegram" as const;
   /** The Bot API has no idempotency key: never resend an unconfirmed message. */
   readonly idempotent = false;
+  /** `sendChatAction("typing")` shows for ~5 s, so it is refreshed inside that. */
+  readonly typingRefreshMs = 4000;
   readonly bot: Bot;
 
   constructor(token: string, private readonly opts: { botInfo?: UserFromGetMe; poll?: boolean } = {}) {
@@ -30,6 +32,15 @@ export class TelegramAdapter implements DeliveryAdapter {
   async send(chatId: string, text: string, _idempotencyKey: string) {
     const m = await this.bot.api.sendMessage(Number(chatId), text);
     return { platformMessageId: String(m.message_id) };
+  }
+
+  /** Best-effort: the indicator is decoration, so a failure here must not disturb the send. */
+  async showTyping(chatId: string) {
+    try {
+      await this.bot.api.sendChatAction(Number(chatId), "typing");
+    } catch {
+      /* the message still goes out on schedule */
+    }
   }
 
   async stop() {

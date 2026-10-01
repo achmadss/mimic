@@ -4,6 +4,8 @@ export type Availability = "available" | "busy" | "away" | "sleeping";
 export const PACES = ["instant", "fast", "normal", "slow", "very_slow"] as const;
 export type Pace = (typeof PACES)[number];
 export type Platform = "telegram" | "discord" | "cli";
+/** What a platform shows for an account. Derived from `activity`; never stored. */
+export type Presence = "online" | "idle" | "dnd" | "invisible";
 export const TOPIC_ACTIONS = ["continue", "switch", "acknowledge_return", "ignore", "ask"] as const;
 export type TopicAction = (typeof TOPIC_ACTIONS)[number];
 export const PENDING_DECISIONS = ["continue", "cancel", "delay", "replace"] as const;

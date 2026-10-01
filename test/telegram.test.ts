@@ -36,6 +36,21 @@ test("bot commands are not conversation: /start is addressed to the bot, not the
   assert.equal(got.length, 1);
 });
 
+test("showTyping sends a typing chat action, and a failure never escapes", async () => {
+  const a = new TelegramAdapter("123:abc", { botInfo, poll: false });
+  const calls: [number, string][] = [];
+  (a.bot.api as any).sendChatAction = async (id: number, action: string) => {
+    calls.push([id, action]);
+  };
+  await a.showTyping("123");
+  assert.deepEqual(calls, [[123, "typing"]]);
+  assert.equal(a.typingRefreshMs, 4000);
+  (a.bot.api as any).sendChatAction = async () => {
+    throw new Error("network");
+  };
+  await a.showTyping("123"); // resolves: the indicator is decoration, the send is not
+});
+
 test("send calls sendMessage and returns the Telegram message id; not idempotent", async () => {
   const a = new TelegramAdapter("123:abc", { botInfo, poll: false });
   const calls: any[] = [];

@@ -1,4 +1,4 @@
-import type { Activity, Availability, ConversationState } from "../types.ts";
+import type { Activity, Availability, ConversationState, Presence } from "../types.ts";
 import type { CharacterProfile } from "./profile.ts";
 
 export function availability(a: Activity): Availability {
@@ -30,6 +30,9 @@ export function attentionNow(
   const decay = 0.5 ** ((now - conv.attentionRaisedAt) / ATTENTION_HALF_LIFE_MS);
   return base + Math.max(0, conv.attention - base) * decay;
 }
+
+/** How a character's availability shows on a platform that has a status (doc 06 §2.27). */
+export const PRESENCE: Record<Availability, Presence> = { available: "online", busy: "idle", away: "idle", sleeping: "invisible" };
 
 const AVAILABILITY_FLOOR: Record<Availability, number> = { available: 1, busy: 0.4, away: 0.2, sleeping: 0.05 };
 
