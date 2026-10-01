@@ -12,4 +12,12 @@ npm start              # Telegram/Discord for every character with a token set
 npm test
 ```
 
-If the model rejects `json_schema`, set `LLM_STRUCTURED_MODE=tool` (or `json_object`).
+`LLM_STRUCTURED_MODE` picks how the reply schema is enforced: `tool` (default, reliable),
+`json_schema`, or `json_object`. On OpenCode Go, `json_schema` fails with a bare 400
+(`{"model":"..."}`) on roughly half of requests for `deepseek-v4.1-flash` — it is not a
+retryable error and the turn is silently dropped, so prefer `tool`.
+
+The OpenCode Go endpoint also requires the model id *without* the `opencode-go/` prefix
+(that prefix is for OpenCode config only), and each model is served on a specific route:
+`/chat/completions` for DeepSeek, GLM, Kimi, LongCat, Hy4; `/responses` for GPT, Grok, Muse
+Spark; `/messages` for MiniMax and Qwen.

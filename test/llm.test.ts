@@ -60,6 +60,16 @@ test("json_object mode appends the schema instruction", async () => {
   assert.match(msgs[msgs.length - 1].content, /JSON schema/);
 });
 
+test("identifies itself and sends the per-conversation session header", async () => {
+  const f = fakeFetch([ok(VALID), ok(VALID)]);
+  const c = client("json_schema", f.fn);
+  await c.generate([{ role: "user", content: "hi" }], { sessionId: "sess-1" });
+  await c.generate([{ role: "user", content: "hi" }], { sessionId: "sess-1" });
+  assert.equal(f.calls[0].headers["user-agent"], "mimic/0.1");
+  assert.equal(f.calls[0].headers["x-opencode-session"], "sess-1");
+  assert.equal(f.calls[1].headers["x-opencode-session"], "sess-1"); // stable across turns of a conversation
+});
+
 test("fenced JSON with prose around it is parsed", () => {
   assert.deepEqual(parseJsonLoose('sure!\n```json\n{"a":1}\n```\nhope that helps'), { a: 1 });
   assert.deepEqual(parseJsonLoose('here: {"a":{"b":2}} done'), { a: { b: 2 } });

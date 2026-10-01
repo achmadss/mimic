@@ -6,7 +6,12 @@ export interface ChatMessage {
   content: string;
 }
 export interface LLMClient {
-  generate(messages: ChatMessage[]): Promise<LLMOutput>;
+  generate(messages: ChatMessage[], opts?: GenerateOptions): Promise<LLMOutput>;
+}
+
+export interface GenerateOptions {
+  /** Stable id for one conversation, so the provider can route and cache prompts per conversation. */
+  sessionId?: string;
 }
 export type StructuredMode = "json_schema" | "tool" | "json_object";
 export interface OpenAICompatibleOptions {
@@ -18,6 +23,7 @@ export interface OpenAICompatibleOptions {
   retryDelayMs?: number;
   timeoutMs?: number;
   fetchFn?: typeof fetch;
+  userAgent?: string;
 }
 
 class RetryableError extends Error {}
@@ -55,12 +61,18 @@ export function openAICompatibleClient(o: OpenAICompatibleOptions): LLMClient {
     };
   }
 
-  async function once(messages: ChatMessage[]): Promise<LLMOutput> {
+  async function once(messages: ChatMessage[], opts?: GenerateOptions): Promise<LLMOutput> {
     let res: Response;
     try {
       res = await f(url, {
         method: "POST",
-        headers: { authorization: `Bearer ${o.apiKey}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${o.apiKey}`,
+          "content-type": "application/json",
+          "user-agent": o.userAgent ?? "mimic/0.1",
+          // OpenCode Go requires a stable per-conversation session id for routing and prompt caching
+          ...(opts?.sessionId ? { "x-opencode-session": opts.sessionId } : {}),
+        },
         body: JSON.stringify(requestBody(messages)),
         signal: AbortSignal.timeout(o.timeoutMs ?? 60_000),
       });
@@ -85,11 +97,11 @@ export function openAICompatibleClient(o: OpenAICompatibleOptions): LLMClient {
   }
 
   return {
-    async generate(messages) {
+    async generate(messages, opts) {
       const attempts = 1 + (o.retries ?? 2);
       for (let i = 0; ; i++) {
         try {
-          return await once(messages);
+          return await once(messages, opts);
         } catch (e) {
           if (!(e instanceof RetryableError) || i + 1 >= attempts) throw e;
           await new Promise((r) => setTimeout(r, (o.retryDelayMs ?? 500) * 2 ** i));

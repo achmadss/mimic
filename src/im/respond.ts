@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { attentionNow, formatLocalTime, speedMultiplier } from "../character/derived.ts";
 import type { CharacterProfile } from "../character/profile.ts";
 import type { Clock } from "../clock.ts";
@@ -64,6 +64,8 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
   try {
     output = await d.llm.generate(
       buildPrompt({ profile, decision, trigger, activity, localTime, topic: conv.topic, recent, turn: texts, keptPending: kept.map((m) => m.text), maxChars: config.maxChars[conv.platform] }),
+      // hashed: the provider gets a stable per-conversation routing key, not the user's platform chat id
+      { sessionId: createHash("sha256").update(conversationId).digest("hex").slice(0, 32) },
     );
   } catch (e) {
     d.log("llm failed; staying silent", e);
