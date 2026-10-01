@@ -100,16 +100,16 @@ export class Store {
   }
 
   /** User messages plus sent bot messages, oldest first, strictly before `before`. */
-  recentMessages(conversationId: string, limit: number, before = Number.MAX_SAFE_INTEGER): { role: "user" | "bot"; text: string }[] {
+  recentMessages(conversationId: string, limit: number, before = Number.MAX_SAFE_INTEGER): { role: "user" | "bot"; text: string; at: number }[] {
     return this.db
       .prepare(
-        `SELECT role, text FROM (
+        `SELECT role, text, at FROM (
            SELECT role, text, at, rowid AS rid FROM messages
            WHERE conversation_id = ? AND at < ? AND (role = 'user' OR status = 'sent')
            ORDER BY at DESC, rid DESC LIMIT ?
          ) ORDER BY at, rid`,
       )
-      .all(conversationId, before, limit) as { role: "user" | "bot"; text: string }[];
+      .all(conversationId, before, limit) as { role: "user" | "bot"; text: string; at: number }[];
   }
 
   insertBotMessage(m: BotMessage) {

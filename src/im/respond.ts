@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { attentionNow, formatLocalTime, speedMultiplier } from "../character/derived.ts";
+import { moodNow } from "../character/mood.ts";
 import { applyStyle, humanize, styleFor, type MessageStyle } from "../character/style.ts";
 import type { CharacterProfile } from "../character/profile.ts";
 import type { Clock } from "../clock.ts";
@@ -26,8 +27,15 @@ export interface Deps {
   log: (msg: string, err?: unknown) => void;
 }
 
+/** The user's finished turn: what they said, and when they started and stopped saying it. */
+export interface TurnInput {
+  texts: string[];
+  firstAt: number;
+  lastAt: number;
+}
+
 /** Jev → decision → LLM → scheduled fragments. Must run inside the conversation's serial queue. */
-export async function respond(d: Deps, conversationId: string, trigger: Trigger, turn: { texts: string[]; firstAt: number } | null): Promise<void> {
+export async function respond(d: Deps, conversationId: string, trigger: Trigger, turn: TurnInput | null): Promise<void> {
   const { store, clock, config } = d;
   const now = clock.now();
   const conv = store.getConversation(conversationId);
@@ -35,8 +43,10 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
   const profile = d.profiles.get(conv.characterId);
   if (!profile) throw new Error(`no profile for character ${conv.characterId}`);
 
-  const { activity } = store.getCharacterState(conv.characterId, now);
+  const cs = store.getCharacterState(conv.characterId, now);
+  const activity = cs.activity;
   const attention = attentionNow(conv, profile, activity, now);
+  const mood = moodNow(cs, now);
   const pending = store.pendingBotMessages(conversationId);
   const recent = store.recentMessages(conversationId, config.recentMessages, turn?.firstAt);
   const localTime = formatLocalTime(now, profile.timezone);
@@ -44,7 +54,23 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
 
   let answers: JevAnswers | null = null;
   try {
-    const state = buildJevState({ trigger, profile, activity, attention, localTime, topic: conv.topic, recent, turn: texts, pending });
+    const state = buildJevState({
+      trigger,
+      now,
+      profile,
+      activity,
+      activitySince: cs.activitySince,
+      mood,
+      moodChangedAt: cs.moodChangedAt,
+      attention,
+      localTime,
+      topic: conv.topic,
+      lastUserAt: conv.lastUserAt,
+      lastBotAt: conv.lastBotAt,
+      turn,
+      recent,
+      pending,
+    });
     answers = await d.jev.ask(state, buildQuestions(trigger, pending));
   } catch (e) {
     d.log("jev unavailable, using defaults", e);
@@ -61,7 +87,8 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
   });
 
   const kept = store.tx(() => applyDecision(d, conv, decision, pending, now));
-  if (decision.respondMode !== "now") return;
+  // An activity change re-decides what is queued. It never writes text, whether or not Jev exists.
+  if (trigger === "activity_changed" || decision.respondMode !== "now") return;
 
   // the seed for both the send jitter and the per-message style, fixed before the model runs
   const generationId = randomUUID();
@@ -110,6 +137,9 @@ function applyDecision(d: Deps, conv: ConversationState, decision: BehaviorDecis
     const attention = Math.max(current.attention ?? 0, decision.attentionRaise);
     store.saveConversation({ ...current, attention, attentionRaisedAt: now });
     store.appendEvent(conv.conversationId, now, "ATTENTION_CHANGED", { attention, raisedBy: decision.attentionRaise });
+  }
+  if (decision.mood) {
+    store.saveCharacterState({ ...store.getCharacterState(conv.characterId, now), mood: decision.mood, moodChangedAt: now });
   }
   if (decision.followUp) {
     scheduler.schedule({ id: `followup:${conv.conversationId}`, conversationId: conv.conversationId, kind: "delayed_followup", dueAt: now + decision.followUp.afterMs });

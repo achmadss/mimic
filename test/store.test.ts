@@ -52,14 +52,14 @@ test("recentMessages: chronological, only sent bot messages, honors before + lim
   s.insertUserMessage("u2", id, "two", 30);
   s.insertUserMessage("u3", id, "three", 40);
   assert.deepEqual(s.recentMessages(id, 10), [
-    { role: "user", text: "one" },
-    { role: "bot", text: "sent-reply" },
-    { role: "user", text: "two" },
-    { role: "user", text: "three" },
+    { role: "user", text: "one", at: 10 },
+    { role: "bot", text: "sent-reply", at: 20 },
+    { role: "user", text: "two", at: 30 },
+    { role: "user", text: "three", at: 40 },
   ]);
   assert.deepEqual(s.recentMessages(id, 2, 40), [
-    { role: "bot", text: "sent-reply" },
-    { role: "user", text: "two" },
+    { role: "bot", text: "sent-reply", at: 20 },
+    { role: "user", text: "two", at: 30 },
   ]);
 });
 

@@ -132,7 +132,7 @@ export class InteractionManager {
       return buf;
     });
     // ponytail: a crash during this turn's Jev/LLM call drops the reply; add a turn-pending marker if that matters
-    if (turn) await respond(this.deps, row.conversationId, "user_turn", { texts: turn.texts, firstAt: turn.firstAt });
+    if (turn) await respond(this.deps, row.conversationId, "user_turn", { texts: turn.texts, firstAt: turn.firstAt, lastAt: turn.lastAt });
   }
 
   private async onSendDue(row: ActionRow) {

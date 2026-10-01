@@ -4,7 +4,7 @@ import { respond } from "../src/im/respond.ts";
 import type { BotMessage } from "../src/types.ts";
 import { choice, makeDeps, noul, score } from "./helpers.ts";
 
-const turn = (texts: string[], firstAt: number) => ({ texts, firstAt });
+const turn = (texts: string[], firstAt: number) => ({ texts, firstAt, lastAt: firstAt });
 
 function seedPending(store: ReturnType<typeof makeDeps>["store"], convId: string, over: Partial<BotMessage> = {}) {
   const m: BotMessage = { id: "old1", conversationId: convId, generationId: "g0", conversationVersion: 0, text: "what happened?", order: 0, status: "scheduled", dueAt: 0, ...over };
