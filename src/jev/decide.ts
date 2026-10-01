@@ -8,6 +8,7 @@ export interface DecideContext {
   maxMessages: number;
   choiceConfidence: number;
   noulThreshold: number;
+  followUpThreshold: number;
 }
 
 export const FOLLOW_UP_MS = { "15m": 15 * 60_000, "1h": 3_600_000, "3h": 3 * 3_600_000, next_day: 18 * 3_600_000 } as const;
@@ -18,18 +19,21 @@ export function decide(answers: JevAnswers | null, c: DecideContext): BehaviorDe
   const a = answers ?? {};
   const choice = <T extends string>(key: string, allowed: readonly T[], fallback: T): T => {
     const x = a[key];
-    return x?.type === "choice" && x.confidence >= c.choiceConfidence && (allowed as readonly string[]).includes(x.choice)
-      ? (x.choice as T)
-      : fallback;
+    if (x?.type !== "choice") return fallback;
+    // Gate on the probability of the chosen option, not on `confidence`. Jev's confidence is a
+    // margin that shrinks as a question gains options, so a 3-way answer tops out around 0.35
+    // (measured) and could never clear a 0.5 bar — every such field silently took its fallback.
+    const p = x.probabilities?.[x.choice] ?? x.confidence;
+    return p >= c.choiceConfidence && (allowed as readonly string[]).includes(x.choice) ? (x.choice as T) : fallback;
   };
-  const yes = (key: string) => {
+  const yes = (key: string, threshold = c.noulThreshold) => {
     const x = a[key];
-    return x?.type === "noul" && x.noul >= c.noulThreshold;
+    return x?.type === "noul" && x.noul >= threshold;
   };
 
   let respondMode = choice("respond_mode", RESPOND_MODES, "now");
   if (c.trigger === "followup_due" && respondMode === "later") respondMode = "no_reply"; // no follow-up chains
-  const wantsFollowUp = c.trigger === "user_turn" && (respondMode === "later" || yes("follow_up"));
+  const wantsFollowUp = c.trigger === "user_turn" && (respondMode === "later" || yes("follow_up", c.followUpThreshold));
   const imp = a.importance;
 
   return {

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { attentionNow, formatLocalTime, speedMultiplier } from "../character/derived.ts";
+import { applyLowercase, styleFor, type MessageStyle } from "../character/style.ts";
 import type { CharacterProfile } from "../character/profile.ts";
 import type { Clock } from "../clock.ts";
 import type { Config } from "../config.ts";
@@ -55,15 +56,20 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
     maxMessages: config.maxMessages,
     choiceConfidence: config.choiceConfidence,
     noulThreshold: config.noulThreshold,
+    followUpThreshold: config.followUpThreshold,
   });
 
   const kept = store.tx(() => applyDecision(d, conv, decision, pending, now));
   if (decision.respondMode !== "now") return;
 
+  // the seed for both the send jitter and the per-message style, fixed before the model runs
+  const generationId = randomUUID();
+  const styles = styleFor(profile, generationId, decision.messageCount);
+
   let output: LLMOutput;
   try {
     output = await d.llm.generate(
-      buildPrompt({ profile, decision, trigger, activity, localTime, topic: conv.topic, recent, turn: texts, keptPending: kept.map((m) => m.text), maxChars: config.maxChars[conv.platform] }),
+      buildPrompt({ profile, decision, trigger, activity, localTime, topic: conv.topic, recent, turn: texts, keptPending: kept.map((m) => m.text), styles }),
       // hashed: the provider gets a stable per-conversation routing key, not the user's platform chat id
       { sessionId: createHash("sha256").update(conversationId).digest("hex").slice(0, 32) },
     );
@@ -73,7 +79,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
     return;
   }
   const speed = speedMultiplier(profile, activity, Math.max(attention, decision.attentionRaise ?? 0));
-  store.tx(() => scheduleReply(d, conversationId, decision, output, kept, speed));
+  store.tx(() => scheduleReply(d, conversationId, decision, output, kept, speed, generationId, styles));
 }
 
 function applyDecision(d: Deps, conv: ConversationState, decision: BehaviorDecision, pending: BotMessage[], now: number): BotMessage[] {
@@ -110,18 +116,27 @@ function applyDecision(d: Deps, conv: ConversationState, decision: BehaviorDecis
   return kept;
 }
 
-function scheduleReply(d: Deps, conversationId: string, decision: BehaviorDecision, output: LLMOutput, kept: BotMessage[], speed: number) {
+function scheduleReply(
+  d: Deps,
+  conversationId: string,
+  decision: BehaviorDecision,
+  output: LLMOutput,
+  kept: BotMessage[],
+  speed: number,
+  generationId: string,
+  styles: MessageStyle[],
+) {
   const { store, scheduler, clock, config } = d;
   const now = clock.now();
   const conv = store.getConversation(conversationId)!;
   const maxChars = config.maxChars[conv.platform];
 
   const texts: string[] = [];
-  for (const m of output.messages.slice(0, decision.messageCount)) {
-    texts.push(m.text.trim().slice(0, maxChars));
+  output.messages.slice(0, decision.messageCount).forEach((m, k) => {
+    texts.push(applyLowercase(m.text.trim(), styles[k]).slice(0, maxChars));
     const correction = m.correction?.trim();
-    if (correction) texts.push(correction.slice(0, maxChars));
-  }
+    if (correction) texts.push(applyLowercase(correction, styles[k]).slice(0, maxChars));
+  });
   store.appendEvent(conversationId, now, "LLM_RESPONSE_GENERATED", { output });
 
   const newTopic = output.topic?.trim();
@@ -130,7 +145,6 @@ function scheduleReply(d: Deps, conversationId: string, decision: BehaviorDecisi
     store.appendEvent(conversationId, now, "TOPIC_CHANGED", { topic: newTopic });
   }
 
-  const generationId = randomUUID();
   const start = Math.max(now, ...kept.map((m) => m.dueAt));
   const offsets = replyOffsets({ pace: decision.pace, speedMultiplier: speed, texts, maxDelayMs: config.maxDelayMs, seed: generationId });
   texts.forEach((text, order) => {

@@ -260,5 +260,21 @@ reconcile `sending`, re-arm. No replay, no distributed consensus.
 | Max messages per reply | 3 (+ correction fragments) |
 | Catch-up window | 5 min |
 | Rate limit | ≤ 1 generated reply per user turn; ≤ 30 sends/min per bot |
-| Jev Choice confidence threshold | 0.5 |
+| Jev Choice confidence threshold | 0.4 — measured against the probability of the option Jev picked, not its `confidence` margin |
 | Jev Noul threshold | 0.7 |
+| Jev follow-up threshold | 0.6 — `follow_up` is scored lower than the other nouls, so it needs its own |
+
+Notes from live tuning (2026-10-01, 19 real turns):
+
+- **Jev's `confidence` is a margin, not a probability.** It shrinks as a question gains options:
+  a 3-way choice tops out around 0.35 while its winner is 0.4–0.7 likely. Gating on it made every
+  `message_count` answer take the fallback — which is the option Jev rated *least* likely. Gate on
+  `probabilities[chosen]` instead. The 0.4 bar sits just above the 1/3 uniform floor of a 3-way
+  question, so a flat distribution still falls back.
+- **`follow_up` runs lower than `ask_question`** on the same 0–1 scale — over 20 turns, median 0.49
+  against 0.61, and a lower ceiling (0.70 against 0.78). At a shared 0.7 cutoff the unprompted
+  follow-up fired on 1 turn in 20; the two questions now have separate thresholds.
+- **`importance` is a 0–3 score**, so `score / 3` maps it to 0..1 and the `≥ 2` bar means
+  "important to the user" or above.
+- **Latency** from user message to first reply measured p50 14.4 s. Long single messages dominate it
+  (generation time), which is why splitting a reply into 2–3 messages makes the bot feel faster.

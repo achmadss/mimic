@@ -93,10 +93,10 @@ test("4xx (non-429) is not retried; exhausting retries throws", async () => {
 
 test("prompt: persona, plan, history roles, follow-up framing", () => {
   const rick = loadProfiles("characters").get("rick")!;
-  const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceConfidence: 0.5, noulThreshold: 0.7 }), messageCount: 2 };
+  const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceConfidence: 0.5, noulThreshold: 0.7, followUpThreshold: 0.55 }), messageCount: 2 };
   const msgs = buildPrompt({
     profile: rick, decision, trigger: "user_turn", activity: "idle", localTime: "Thu 04:00", topic: "portal gun",
-    recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], maxChars: 2000,
+    recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], styles: [{ lowercase: false, typo: false }, { lowercase: false, typo: false }],
   });
   assert.equal(msgs[0].role, "system");
   assert.match(msgs[0].content, /Rick Sanchez/);
@@ -105,7 +105,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   assert.deepEqual(msgs.slice(1).map((m) => m.role), ["user", "assistant", "user"]);
   assert.equal(msgs[msgs.length - 1].content, "my boss quit");
 
-  const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], maxChars: 2000 });
+  const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], styles: [] });
   assert.equal(fu.length, 1);
   assert.match(fu[0].content, /on your own/);
 });

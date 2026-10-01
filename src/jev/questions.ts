@@ -15,7 +15,11 @@ export function buildQuestions(trigger: Trigger, pending: { id: string; text: st
     },
     follow_up: {
       type: "noul",
-      instructions: "Would `character` naturally message again on their own later about this, e.g. after finishing what they are doing?",
+      // Deliberately NOT "…e.g. after finishing what they are doing": `activity` is always `idle`
+      // until the routine engine lands, so that clause refers to a state that does not exist and
+      // Jev answers "they are free, they would just reply now" — measured 0.23-0.32 over real turns.
+      // Ask the answerable question instead: is there something left for them to come back with?
+      instructions: "Does `character` have anything they want to bring up on their own later, or is the conversation done for now?",
     },
     follow_up_after: {
       type: "choice",
@@ -35,8 +39,14 @@ export function buildQuestions(trigger: Trigger, pending: { id: string; text: st
     },
     message_count: {
       type: "choice",
-      instructions: "Into how many separate short chat messages would `character` split the reply?",
-      criteria: { "1": null, "2": null, "3": null },
+      // Without criteria to choose between them Jev answers 1 every time, so a character with a lot
+      // to say writes one 300-character paragraph instead of texting like a person.
+      instructions: "Into how many separate short messages would `character` break this reply?",
+      criteria: {
+        "1": "One short line is the whole reply",
+        "2": "A line, then a separate afterthought or a follow-up question",
+        "3": "A burst of short messages: a reaction, then a follow-up, then the point",
+      },
     },
     ask_question: { type: "noul", instructions: "Should the reply ask the user something?" },
     importance: {

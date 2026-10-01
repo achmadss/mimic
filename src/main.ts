@@ -1,6 +1,6 @@
 import { loadProfiles } from "./character/profile.ts";
 import { realClock } from "./clock.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
+import { DEFAULT_CONFIG, type Config } from "./config.ts";
 import { openDb } from "./db.ts";
 import { CliAdapter } from "./delivery/cli.ts";
 import { DiscordAdapter } from "./delivery/discord.ts";
@@ -21,6 +21,16 @@ function env(name: string): string {
 const MODES: StructuredMode[] = ["json_schema", "tool", "json_object"];
 const mode = (process.env.LLM_STRUCTURED_MODE ?? "json_schema") as StructuredMode;
 if (!MODES.includes(mode)) throw new Error(`LLM_STRUCTURED_MODE must be one of ${MODES.join(", ")}`);
+
+/** Optional env overrides, so tuning a running character doesn't mean editing source. */
+function configFromEnv(): Config {
+  const num = (name: string, fallback: number) => (process.env[name] ? Number(process.env[name]) : fallback);
+  return {
+    ...DEFAULT_CONFIG,
+    quietMs: num("MIMIC_QUIET_MS", DEFAULT_CONFIG.quietMs),
+    followUpThreshold: num("MIMIC_FOLLOW_UP_THRESHOLD", DEFAULT_CONFIG.followUpThreshold),
+  };
+}
 
 const store = new Store(openDb(process.env.DB_PATH ?? "mimic.db"));
 const profiles = loadProfiles("characters");
@@ -47,7 +57,7 @@ if (cliIdx >= 0) {
 if (adapters.size === 0) throw new Error("no adapters: set bot token env vars, or run `npm run cli -- rick`");
 
 const im = new InteractionManager(
-  { store, clock: realClock, jev, llm, profiles, config: DEFAULT_CONFIG, log: (m, e) => console.error(`[mimic] ${m}`, e ?? "") },
+  { store, clock: realClock, jev, llm, profiles, config: configFromEnv(), log: (m, e) => console.error(`[mimic] ${m}`, e ?? "") },
   (characterId, platform) => {
     const a = adapters.get(key(characterId, platform));
     if (!a) throw new Error(`no adapter for ${characterId} on ${platform}`);
