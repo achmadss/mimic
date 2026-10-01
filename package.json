@@ -1,0 +1,27 @@
+{
+  "name": "mimic",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "start": "node --env-file-if-exists=.env --import tsx src/main.ts",
+    "cli": "node --env-file-if-exists=.env --import tsx src/main.ts --cli"
+  },
+  "dependencies": {
+    "@grammyjs/auto-retry": "^2.0.2",
+    "better-sqlite3": "^13.0.3",
+    "discord.js": "^14.27.0",
+    "grammy": "^1.46.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
