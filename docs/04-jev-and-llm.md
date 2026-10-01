@@ -1,69 +1,114 @@
 # 04 — Jev Decision Model and LLM Contract
 
-## 1. Jev: one structured call per turn
+## 1. Jev: one request per turn
 
-The brief (§6, §9) warns against dozens of tiny Jev calls. We replace them with
-**one `BehaviorDecision` per turn** that bundles the correlated judgements.
+Jev is TypeSafe AI's System One model (`jev-latest`, HTTP
+`POST https://api.typesafe.ai/v1/systemone`, TS SDK `@typesafe-ai/sdk`). It
+does **not** generate text or arbitrary JSON. A request is one **state** plus a
+map of typed **questions**, and every answer is a probability:
 
-### Input to Jev
+- **Choice** — pick one of up to 255 named options. Returns `choice`,
+  `probabilities`, and `confidence`.
+- **Score** — rate against 2–10 ordered levels. Returns `score`,
+  `probabilities`, and `confidence`.
+- **Noul** — yes/no. Returns `noul` ∈ [0,1].
+
+All questions in one request are evaluated in parallel, so adding questions
+barely changes latency. This is what makes "one Jev call per turn" work: the
+brief (§6, §9) warns against dozens of tiny calls, and here the whole turn's
+judgement is **one request with many questions**. The System then assembles a
+`BehaviorDecision` from the answers, applying thresholds and clamps in code.
+
+### Jev state (what Jev reads)
 
 ```ts
-type JevInput = {
-  character: CharacterProfile
-  characterState: CharacterStateDerived   // activity + derived values
-  conversation: ConversationState
-  currentTurn: { messages: string[] }      // the buffered user turn
-  pendingBots: { messageId: string; text: string; dueAt: number }[]
-  unresolved: UnresolvedItem[]
-  clock: { now: number; localHour: number; routineSlot: string }
-  contextCandidates: ContextCandidateSummary[]
+type JevState = {
+  trigger: "user_turn" | "followup_due" | "activity_changed"
+  character: { name: string; personaSummary: string }
+  activity: Activity
+  derived: { availability: Availability; interruptibility: number; attention: number }
+  localTime: string                       // character TZ, e.g. "Tue 23:40"
+  topic: string | null
+  recentMessages: { from: "user" | "bot"; text: string }[]   // short window
+  currentTurn: string[]                   // the buffered user turn
+  pendingBots: { id: string; text: string }[]
+  unresolved: { id: string; summary: string }[]
+  contextCandidates: { id: string; summary: string }[]       // capped, e.g. 20
 }
 ```
 
 Jev sees **summaries and candidates**, never raw database rows (§30.2).
 
-### Output from Jev
+### Questions (one request)
+
+| Key | Type | Options / levels | Feeds |
+|---|---|---|---|
+| `respond_mode` | Choice | `now`, `later`, `no_reply` | `respondMode` |
+| `follow_up` | Noul | "would naturally message again later about this" | `followUp` |
+| `follow_up_after` | Choice | `15m`, `1h`, `3h`, `next_day` | `followUp.afterMs` |
+| `topic_action` | Choice | `continue`, `switch`, `acknowledge_return`, `ignore`, `ask` | `topicAction` |
+| `pace` | Choice | `instant`, `fast`, `normal`, `slow`, `very_slow` | `pace` |
+| `message_count` | Choice | `1`, `2`, `3` | `messageCount` |
+| `ask_question` | Noul | "the reply should ask the user something" | `askQuestion` |
+| `importance` | Score | trivial → urgent (4 levels) | `attentionRaise` |
+| `opens_thread` | Noul | "user mentioned something worth asking about later" | unresolved item |
+| `horizon` | Choice | `current_turn`, `recent`, `recent_topic`, `current_conversation`, `long_term` | `contextPlan.horizon` |
+| `pending_<id>` | Choice, one per pending msg | `continue`, `cancel`, `delay`, `replace` | `pendingActions` |
+| `relevant_<id>` | Noul, one per candidate | "relevant to the current turn" | `contextPlan.include` |
+| `turn_emotion` | Choice | `neutral`, `excited`, `annoyed`, `sad`, `confused`, `joking`, `serious` (same set as example tags) | example selection (doc 05 §5.1) |
+| `mood` | Choice (experimental) | `neutral`, `happy`, `tired`, `annoyed`, `excited`, `distracted` | `mood` |
+
+Questions are added only when they apply: no `pending_*` without pending
+messages, and no `topic_action` on a `followup_due` trigger.
+
+### BehaviorDecision (assembled by the System)
 
 ```ts
 type BehaviorDecision = {
-  respond: boolean
   respondMode: "now" | "later" | "no_reply"
-  followUpAfterMs?: number          // only when respondMode = "later"
-
+  followUp?: { afterMs: number }    // set when follow_up.noul ≥ threshold or respondMode = "later"
   topicAction: "continue" | "switch" | "acknowledge_return" | "ignore" | "ask"
-  newTopic?: string
-
   pace: "instant" | "fast" | "normal" | "slow" | "very_slow"
-  delayRange?: [number, number]     // optional bounded override
-
-  messageCount: number              // 1..maxMessages (System clamps)
+  messageCount: 1 | 2 | 3
   askQuestion: boolean
-  attentionRaise?: number           // 0..1, System clamps
-
-  pendingAction?: {
-    action: "continue" | "cancel" | "delay" | "replace"
-    messageIds: string[]
-    delayMs?: number
-  }
-
-  contextPlan?: {
-    horizon: "current_turn" | "recent" | "recent_topic" | "current_conversation" | "long_term"
-    include?: string[]
-    exclude?: string[]
-  }
-
-  reason: string                    // short; for debugging and the event log
+  attentionRaise?: number           // importance score mapped to 0..1
+  openThread: boolean               // LLM writes the summary (see §2)
+  mood?: Mood
+  pendingActions: { messageId: string; action: "continue" | "cancel" | "delay" | "replace" }[]
+  contextPlan: { horizon: Horizon; include: string[] }
+  answers: unknown                  // raw Jev answers, kept for the event log
 }
 ```
 
-One call answers all of: should I respond, when, how fast, how many messages,
-topic handling, pending-message handling, attention, and context horizon.
+Things Jev cannot produce come from elsewhere:
+
+- **New topic label** — Jev cannot output text. When `topicAction` is
+  `switch`, the LLM returns the label (`LLMOutput.topic`).
+- **Unresolved-thread summary** — when `opens_thread` fires, the LLM returns it
+  (`LLMOutput.openThread`).
+- **Exact delays** — `pace` → range table (doc 03 §2); `delay` on a pending
+  message reuses the current pace's range.
+- **`reason`** — dropped. The raw probabilities in `answers` explain the
+  decision better than a sentence would.
+
+### Confidence gating
+
+Each Choice/Score answer carries `confidence`. Below a configured threshold
+(start at 0.5), the System uses that field's deterministic default instead:
+respond `now`, `normal` pace, 1 message, `continue` topic, `recent` horizon.
+For a pending message, the default is `cancel` (a stale reply is worse than a
+missing one). Nouls use probability thresholds (start at 0.7).
+
+### Jev unavailable
+
+Every field takes its default; all pending messages are cancelled and the bot
+replies `now`. The engine never blocks on Jev.
 
 ### Which decisions stay deterministic (no Jev)
 
 | Decision | Why deterministic |
 |---|---|
-| Actual `dueAt` timestamp | Clock math; Jev gives a category/range only. |
+| Actual `dueAt` timestamp | Clock math; Jev gives a pace category only. |
 | Max message count clamp | Safety bound. |
 | Max delay clamp | Safety bound; prevents absurd waits. |
 | Rate limit | Anti-spam; not a judgement. |
@@ -82,19 +127,44 @@ emits `ACTIVITY_CHANGED` with no Jev call.
 The LLM's only job is language. It receives a fully assembled, budgeted context
 and the behavior decision, and returns **structured** output.
 
+The engine talks to the LLM through one adapter interface, so the provider can
+be swapped:
+
+```ts
+interface LLMClient {
+  generate(input: LLMInput): Promise<LLMOutput>   // validates against the LLMOutput schema
+}
+```
+
+The first implementation is **OpenAI-compatible** `POST {baseUrl}/chat/completions`,
+configured by `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`. Testing uses
+OpenCode Go (`https://opencode.ai/zen/go/v1`, model list at `/models`).
+Gateway models differ in what structured output they support, so the client
+has one config switch:
+
+| `LLM_STRUCTURED_MODE` | Request | Notes |
+|---|---|---|
+| `json_schema` (default) | `response_format: { type: "json_schema", strict: true }` | Best when the model supports it |
+| `tool` | a single forced tool call whose parameters are the `LLMOutput` schema | For models that do tools but not `json_schema` |
+| `json_object` | `response_format: { type: "json_object" }` + schema pasted in the prompt | Last resort |
+
+In every mode the response is validated against the same `LLMOutput` schema.
+Output that fails validation counts as a failed attempt and goes through the
+retry path in doc 03 §6.
+
 ### Input (conceptual)
 
 ```ts
 type LLMInput = {
   characterVoice: CharacterVoice      // profile + style + examples
-  behaviorDecision: BehaviorDecision
+  behaviorDecision: Omit<BehaviorDecision, "answers">
   context: ContextItem[]              // already retrieved, ordered, budgeted
   constraints: {
     maxMessages: number
-    maxCharsPerMessage: number
+    maxCharsPerMessage: number        // ≤ platform limit (Telegram 4096, Discord 2000)
     lowercase: boolean
     allowTypos: boolean
-    language: string
+    language: string                  // "en" for now
   }
 }
 ```
@@ -106,16 +176,18 @@ type LLMOutput = {
   messages: {
     text: string
     correction?: string     // e.g. "*tomorrow"; System schedules as next fragment
-    delayHint?: "fast" | "normal" | "slow"   // within the decision's bound
+    delayHint?: "fast" | "normal" | "slow"   // position within the pace range
   }[]
+  topic?: string            // required when topicAction = "switch"
+  openThread?: string       // required when decision.openThread; e.g. "interview tomorrow"
   usedContextIds: string[]  // for provenance/debugging
-  notes?: string            // optional, not sent to the user
 }
 ```
 
 Rules enforced by the System, not the prompt alone:
 
-- `messages.length` clamped to `maxMessages`.
+- `messages.length` clamped to `maxMessages`. A `correction` is an extra
+  fragment and does not count toward the limit.
 - Each message clamped to `maxCharsPerMessage`.
 - `usedContextIds` recorded for explainability (§30.6).
 - Typos are a *tendency*: the prompt includes a probability-like instruction
@@ -140,10 +212,10 @@ individual fragments, and group a self-correction (`i'll see you tomorow` then
 
 ### What the LLM never controls
 
-- Timing (only a `delayHint` inside a Jev-bounded range).
+- Timing (only a `delayHint` inside the pace range).
 - Cancellation of other messages.
 - The scheduler.
-- Whether the bot responds at all (that is Jev's `respond`).
+- Whether the bot responds at all (that is Jev's `respondMode`).
 - Token/context budgeting (already applied).
 
 ## 3. LLM efficiency — when NOT to call it

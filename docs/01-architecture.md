@@ -20,26 +20,22 @@ between them must be sharp. Each layer has a single kind of authority.
 │       └──────────────► Event Log (append-only)   │                 │
 │                                                  │                 │
 │  Routine Engine ─► Character State ──────────────┘                 │
-│  Delivery Adapter ◄── Scheduler                                    │
-└───────────────┬───────────────────────────┬──────────────────────┘
-                │                           │
-         (1) state + candidates        (4) verified messages
-                ▼                           │
-        ┌───────────────┐                   │
-        │      JEV      │                   │
-        │ behavior +    │                   │
-        │ context plan  │                   │
-        └───────┬───────┘                   │
-                │ (2) decision + plan       │
-                ▼                           │
-        ┌───────────────┐                   │
-        │      LLM      │                   │
-        │ language +    │                   │
-        │ message list  │                   │
-        └───────┬───────┘                   │
-                │ (3) structured messages   │
-                └───────────────────────────┘
+│  Delivery Adapter ◄── Interaction Manager                          │
+└──────────┬──────────▲───────────────────┬──────────▲─────────────┘
+           │          │                   │          │
+  (1) state +    (2) typed          (3) context +   (4) structured
+   questions      answers            decision        messages
+           ▼          │                   ▼          │
+        ┌───────────────┐              ┌───────────────┐
+        │      JEV      │              │      LLM      │
+        │ behavior +    │              │ language +    │
+        │ judgements    │              │ message list  │
+        └───────────────┘              └───────────────┘
 ```
+
+Jev and the LLM never talk to each other directly. The System calls each one
+and validates what comes back. Jev returns probabilities; the System turns them
+into a `BehaviorDecision` (doc 04 §1).
 
 ### Application System
 
@@ -48,12 +44,21 @@ persisted.
 
 - Timers, delays, monotonic clock.
 - Persistent state and the event log.
-- Queues: user-turn buffer, pending action queue, per-conversation work queue.
+- Queues: user-turn buffer, scheduled actions, per-conversation work queue.
 - Scheduling, cancellation mechanics, delivery retries.
 - State transitions and validation (message lifecycle, version checks).
 - Rate limits, maximum message count, maximum delay, routine boundaries.
 - Context retrieval/budgeting (mechanics).
-- External platform calls.
+- External platform calls (Telegram, Discord) through one adapter:
+
+```ts
+interface DeliveryAdapter {
+  platform: "telegram" | "discord"
+  send(chatId: string, text: string, idempotencyKey: string /* Discord nonce; Telegram ignores */): Promise<{ platformMessageId: string }>
+  showTyping(chatId: string): Promise<void>   // Telegram ~5s, Discord ~10s; re-send while typing
+  onMessage(cb: (msg: UserMessage) => void): void
+}
+```
 
 ### Jev
 
@@ -100,23 +105,25 @@ incoming message
 ## 2. Shared infrastructure map
 
 `DOC.md` lists many features. Most are the *same* primitive wearing different
-names. Build these six primitives once:
+names. Build these five primitives once:
 
 | Primitive | Responsibility | Features it serves |
 |---|---|---|
-| **Event Log** | Append-only, per conversation. Source of truth for replay and debugging. | memory, summaries, topic history, user-behavior modeling, stale detection, audit |
+| **Event Log** | Append-only, per conversation. Audit trail and input for memory/summaries; written in the same transaction as state. | memory, summaries, topic history, user-behavior modeling, stale detection, audit |
 | **Conversation State** | Versioned snapshot of the active exchange. | turn aggregation, topic tracking, momentum, interruptions, unresolved items |
-| **Scheduler** | One delay/timer service, persisted, restart-safe. | response delays, multi-message spacing, follow-ups, delayed replies, routine transitions, activity changes, stale checks, cancellation |
-| **Pending Action Queue** | Durable list of future actions (send/cancel/replan/activity). | outgoing messages, follow-ups, activity changes, routine events, delayed responses |
+| **Scheduler** | Durable table of future actions (send, follow-up, activity change, routine transition, turn quiet), restart-safe. Also *is* the pending action queue. | response delays, multi-message spacing, outgoing messages, follow-ups, delayed replies, routine transitions, activity changes, cancellation |
 | **Interaction Manager** | Single serialized entry point per conversation. | interruptions, topic switch, cancellation, delay, new user messages, stale detection, replanning |
 | **Character State Engine** | Derives behavioral values from persisted state. | activity, availability, interruptibility, attention, response speed, mood |
 
 ### Why one Scheduler, not many timers scattered
 
 Response delay, multi-message spacing, delayed follow-up, routine transition,
-and stale-response checks are all "do X at time T, unless invalidated". They
-share the same durable timer table. This removes five ad-hoc timer systems and
-gives one recovery path after restart.
+and turn debounce are all "do X at time T, unless invalidated". They share the
+same durable timer table. That table also serves as the pending action queue:
+a pending action is just a row that has not fired yet. Keeping a separate queue
+would mean two stores describing the same future and a sync problem between
+them. This removes five ad-hoc timer systems and gives one recovery path after
+restart.
 
 ### Why one Interaction Manager
 
@@ -138,7 +145,8 @@ type IncomingEvent =
   | { type: "USER_TURN_READY"; turnId: string }
   | { type: "TIMER_EXPIRED"; actionId: string }
   | { type: "ACTIVITY_CHANGED"; activity: Activity }
-  | { type: "DELIVERY_RESULT"; messageId: string; ok: boolean }
+  | { type: "OUTGOING_MESSAGE_SENT"; messageId: string }
+  | { type: "DELIVERY_FAILED"; messageId: string }
 
 interface InteractionManager {
   enqueue(conversationId: string, event: IncomingEvent): void
@@ -177,9 +185,14 @@ type TurnBuffer = {
 ```
 
 Rule: each new user message extends `lastAt` and resets a short *quiet timer*
-(debounce). When the timer expires, the System emits `USER_TURN_READY`. Jev may
-also force readiness when a message is clearly complete. This reuses the one
-Scheduler.
+(debounce). When the timer expires, the System emits `USER_TURN_READY`. A turn
+is also forced ready once `now - firstAt` exceeds a maximum turn window, so a
+user who keeps typing still gets a reply. Jev is not asked whether the user is
+finished, because that would be a Jev call per message. This reuses the one
+Scheduler (a `turn_quiet` action).
+
+While the buffer is `collecting`, outgoing sends that come due are held until
+the turn is ready. A bot message never lands in the middle of a user's burst.
 
 ## 4. Multi-character support
 
@@ -201,7 +214,7 @@ character-agnostic; only configuration and the LLM prompt content vary.
 - Never let the LLM emit an unbounded message list — clamp to a configured
   maximum (MVP: 3).
 - Never let a requested delay exceed a configured maximum (MVP: 2 minutes for
-  normal replies, routine delays may be longer).
+  normal replies; follow-ups and routine actions have their own, longer cap).
 - Never send a message whose `conversationVersion` is stale.
 - Never persist derived values that a pure function can recompute cheaply.
 - Never generate text when a deterministic stub is equivalent (for example an

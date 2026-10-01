@@ -9,24 +9,30 @@ The smallest system that feels human and is honest about what it defers.
 1. **Event Log** — append-only per conversation.
 2. **Conversation State** — version, topic, timestamps, unresolved items.
 3. **Turn Buffer + debounce** — multiple user messages become one turn.
-4. **Character State engine** — persisted `activity`, `attention`; derived
-   `availability`, `interruptibility`, `responseSpeed`.
-5. **Scheduler** — one durable delay queue; restart-safe.
-6. **Pending Action Queue + message lifecycle** — planned → scheduled → ready →
+4. **Character State engine** — persisted `activity` and per-conversation
+   `attention`; derived `availability`, `interruptibility`, `responseSpeed`.
+5. **Scheduler** — one durable delay queue; restart-safe. It is also the
+   pending action queue.
+6. **Message lifecycle** — planned → scheduled → ready →
    sending → sent, with cancellation.
 7. **Interaction Manager** — serialized per conversation.
-8. **Jev integration** — one `BehaviorDecision` per turn (respond, topic, pace,
-   messageCount, pending action).
-9. **LLM integration** — structured `messages[]` output.
+8. **Jev integration** — one `BehaviorDecision` per turn (respondMode, topic,
+   pace, messageCount, attention raise, pending actions).
+9. **LLM integration** — structured `messages[]` output, including
+   self-corrections and the imperfect-grammar tendency.
 10. **Context Builder (simple)** — recent messages + current turn + topic +
     character profile; fixed budget.
 11. **Stale-response guard** — `conversationVersion` check before send.
 12. **Coarse routine** — 3–4 slots (morning/day/evening/night) driving
     `activity`.
-13. **One character profile + a few tagged examples.**
+13. **Two characters (Rick, Morty)** — hand-written persona + transcript-derived,
+    Jev-tagged examples (doc 05 §5.1).
+14. **Telegram + Discord DM adapters** behind one `DeliveryAdapter`.
 
 ### Explicitly out of MVP
 
+- Discord DM reach (how users find and DM the bots: shared server or user-installed app).
+- Languages other than English.
 - Vector search, semantic retrieval.
 - Mood engine, social-state variables.
 - Momentum as stored state.
@@ -51,16 +57,16 @@ message length/pace tuning, self-corrections, multi-message bursts, imperfect
 grammar tendency.
 
 ### Stage 3 — Context
-Context Builder budget + ordering, topic-based retrieval, tagged examples,
+Context Builder budget + ordering, keyword/topic retrieval, tagged examples,
 unresolved items, simple summaries.
 
 ### Stage 4 — Async behaviors
-Delayed follow-ups, activity-override/interruption handling, "not responding"
+Delayed follow-ups, activity change while a reply is pending, "not responding"
 with scheduled retry, presence/typing simulation.
 
 ### Stage 5 — Depth
 Topic-latching modes, relationship state, mood (optional), user-behavior
-adaptation, keyword/topic scoring.
+adaptation.
 
 ### Stage 6 — Experimental
 Semantic retrieval, vector search, full social-state model, multi-conversation
@@ -71,28 +77,32 @@ memory graph.
 ```
 1. Event Log + persistence
 2. Conversation State + version counter
-3. Scheduler (in-memory first, then durable)
+3. Scheduler (SQLite action table + in-process timers)
 4. Interaction Manager (serial queue, event dispatch)
-5. Delivery adapter stub (log-only)
-6. Jev client + BehaviorDecision schema
-7. LLM client + LLMOutput schema
+5. Delivery adapter stub (CLI / log-only) — the test harness for everything after
+6. Jev client (`@typesafe-ai/sdk`): question builder + answers → BehaviorDecision
+7. LLMClient interface + OpenAI-compatible client (structured-mode switch) + LLMOutput validation
 8. Turn buffer + debounce
 9. Message lifecycle + version guard
-10. Character State engine + profile
+10. Character State engine + profile + derived values
 11. Context Builder (recent + topic + profile)
 12. Coarse routine engine
-13. Attention + derived values
+13. Attention capture
 14. Multi-message bursts + self-corrections
-15. Tagged examples retrieval
+15. Transcript ingest (CSV → exchanges → Jev tags) + tagged example retrieval
 16. Unresolved items
 17. Delayed follow-ups
 18. Presence / typing simulation (view of scheduler)
 19. Summaries + long-term memory
 20. Topic-latching modes
+21. Telegram adapter, then Discord adapter (can move up to right after 9 once
+    the CLI loop works; they only implement `DeliveryAdapter`)
 ```
 
 Rationale: each step is independently testable and only depends on earlier
-steps. Steps 1–9 form a runnable loop; 10–13 add character; the rest add depth.
+steps. Steps 1–9 form a runnable loop against the CLI adapter; 10–13 add
+character; the rest add depth. Every timing step is tested with the fake
+`Clock`.
 
 ## 4. Risks and mitigations (§25.N)
 
@@ -102,14 +112,14 @@ steps. Steps 1–9 form a runnable loop; 10–13 add character; the rest add dep
 | **State explosion** | Many booleans that drift | One owner per field; derived values recomputed; redundancy removed (doc 02) |
 | **Excessive Jev calls** | A call per micro-decision | One `BehaviorDecision` per turn; deterministic defaults otherwise |
 | **Excessive LLM calls** | LLM for activity, presence, acks | LLM only for fresh natural language |
-| **Timing complexity** | Absolute timestamps leaking from Jev | Jev gives category/bounded range; System owns the clock |
+| **Timing complexity** | Absolute timestamps leaking from Jev | Jev gives a pace category; System owns the clock |
 | **Race conditions** | Concurrent edits to one conversation | Serialize per conversation; event log ordering |
 | **Stale responses** | "what happened?" after "never mind" | Single `conversationVersion` gate before send |
 | **Unnatural behavior** | Deterministic tics ("always says lol") | Seeded probability + suppression of repeated patterns |
 | **Excessive randomness** | Chaotic, unreproducible behavior | Seeded RNG per character; bounded jitter; no random non-response |
 | **Non-response frustration** | Bot silently ignores user | "Not responding" must schedule a follow-up or be rare and configured; never pure random silence |
-| **Maintenance complexity** | Many subsystems | Six primitives; one scheduler; one interaction manager |
-| **Restart data loss** | Scheduled messages vanish | Log-before-act; replay + re-arm; catch-up policy |
+| **Maintenance complexity** | Many subsystems | Five primitives; one scheduler; one interaction manager |
+| **Restart data loss** | Scheduled messages vanish | State + event in one transaction; load + re-arm; catch-up policy |
 | **Context bloat** | Irrelevant history floods prompt | Budget + priority ordering; topic filtering; explainable selection |
 | **Context conflict** | Old context contradicts current turn | Current turn + version win; discard contradictory items |
 
@@ -129,7 +139,7 @@ Guidance for every future feature:
 
 ## 6. Recommendation summary
 
-Build the six primitives; run one serialized Interaction Manager; make Jev one
+Build the five primitives; run one serialized Interaction Manager; make Jev one
 structured decision per turn; make the LLM return structured messages; guard
 every send with one version counter; derive everything derivable. Ship
 tag/topic context retrieval first. Add mood, relationship state, and vector

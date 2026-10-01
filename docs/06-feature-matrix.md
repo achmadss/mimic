@@ -19,7 +19,7 @@ Every feature from `DOC.md` §2. Layer codes: **Sys** = System, **Jev**,
 | 2.12 | Device/local time routine | Yes | Sys | Jev | Routine Engine | Med | High | MVP (coarse), Next (fine) |
 | 2.13 | Availability | Yes | Sys (derived) | Jev | Derived from activity | Low | Med | MVP (derived) |
 | 2.14 | Interruptibility | Yes | Sys (derived) | Jev | Derived from activity | Low | High | MVP |
-| 2.15 | Attention capture | Yes | Jev | Sys | Character State scalar | Low | Med | Next |
+| 2.15 | Attention capture | Yes | Jev | Sys | Per-conversation scalar | Low | Med | MVP |
 | 2.16 | Response speed | Yes | Sys (derived) | Jev (pace) | Derived + Scheduler | Low | High | MVP |
 | 2.17 | Not responding | Yes | Jev | Sys | Behavior decision | Low | High | MVP |
 | 2.18 | Delayed follow-up | Yes | Jev | Sys | Scheduler (reuse) | Low | Med | Next |
@@ -53,7 +53,8 @@ the derivation is hot. **Next**, not MVP.
 ### 2.15 Attention — kept, but small
 
 Kept because an important message must override an activity baseline. It is one
-scalar with decay, not a state machine. **Next**.
+per-conversation scalar with decay computed on read, not a state machine.
+**MVP**, because interruptibility (MVP) is derived from it.
 
 ### 2.20 Social state — dropped
 
@@ -83,6 +84,16 @@ store.
 should not duplicate platform presence. Only build what the target platform
 does not already provide.
 
+On the chosen platforms:
+
+- **Typing** — Telegram `sendChatAction("typing")` lasts ~5 s and Discord
+  `sendTyping` lasts ~10 s; both must be re-sent while the typing window is
+  open. Start it at `dueAt − typingTime`.
+- **Presence** — Telegram bots have no online/last-seen. Discord bots do have
+  a status (online / idle / dnd), and it can mirror derived `availability`.
+  That status is global for the bot account, which fits one bot per
+  character.
+
 ### 2.28 Stale detection — one counter
 
 Covered by `conversationVersion`; see doc 03.
@@ -96,8 +107,7 @@ An in-process event log + serial per-conversation queue. No external bus.
 | Shared primitive | Features that reuse it |
 |---|---|
 | Conversation State | 2.4, 2.9, 2.10, 2.25, 2.28, context |
-| Scheduler | 2.3, 2.5, 2.6, 2.12, 2.18, 2.19, 2.27 |
-| Pending Action Queue | 2.5, 2.7, 2.8, 2.17, 2.18, 2.19 |
+| Scheduler (incl. pending actions) | 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.12, 2.17, 2.18, 2.19, 2.27 |
 | Interaction Manager | 2.4, 2.7, 2.8, 2.28, replanning |
 | Character State Engine | 2.11, 2.13, 2.14, 2.15, 2.16, 2.21 |
 | Behavior Decision | 2.1, 2.6, 2.9, 2.17, 2.16 |

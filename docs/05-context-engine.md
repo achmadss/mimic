@@ -28,16 +28,21 @@ retrieved**. Examples are **optional**.
 
 ## 2. Jev as Context Planner
 
-Jev does **not** retrieve records. It receives candidate summaries and returns a
-horizon plus include/exclude choices:
+Jev does **not** retrieve records. Candidate summaries go into the turn's Jev
+state, and the same request asks a `horizon` Choice plus one
+`relevant_<id>` Noul per candidate (doc 04 §1). The System turns that into a
+plan:
 
 ```json
 {
   "horizon": "recent_topic",
-  "include": ["topic_18", "memory_4"],
-  "exclude": ["topic_12"]
+  "include": ["topic_18", "memory_4"]
 }
 ```
+
+`include` = candidates whose Noul ≥ threshold. Everything else is excluded by
+default, so there is no separate `exclude` list. Candidates are capped (start:
+20, ranked by recency + tag match) to keep the request small.
 
 The System translates the horizon into actual retrieval. This keeps Jev
 decoupled from the storage schema (§30.3).
@@ -57,7 +62,7 @@ decoupled from the storage schema (§30.3).
 ```
 1. Collect conversation state + system state          (always)
 2. Collect candidate summaries                        (store query, cheap)
-3. Ask Jev for horizon + include/exclude              (or deterministic default)
+3. Read horizon + relevant_* from the turn's Jev answers (or default)
 4. Retrieve selected items                            (messages/summaries/memories/examples)
 5. Deduplicate + order by priority                    (immediate → conversational → long-term)
 6. Apply token/size budget                            (trim lowest priority first)
@@ -66,7 +71,7 @@ decoupled from the storage schema (§30.3).
 ```
 
 Steps 3 and 4 are merged when no Jev context plan exists: use the default
-horizon `recent` + `recent_topic`.
+horizon `recent`.
 
 ### Context item
 
@@ -107,7 +112,7 @@ The brief asks which to use first (§30.13, §20). Recommendation, in order:
 1. **Manual + tag selection** (MVP). Examples and memories carry tags
    (`scenario`, `topic`, `emotion`, `behavior`). Selection = filters on
    character + current activity/topic.
-2. **Keyword/topic scoring** (MVP, cheap). Rank topic summaries and memories by
+2. **Keyword/topic scoring** (Next, cheap). Rank topic summaries and memories by
    term overlap with the current turn and topic. This solves the "PC history
    drowning out the keyboard topic" problem via topic tags rather than
    embeddings.
@@ -118,6 +123,44 @@ The brief asks which to use first (§30.13, §20). Recommendation, in order:
 
 This honors §30.7 (topic-based retrieval before semantic) and the constraint to
 avoid premature vector databases (§26).
+
+### 5.1 Example source: show transcripts
+
+The first characters are **Rick** and **Morty**. Their examples come from a
+transcript CSV of the show, so nobody hand-writes example conversations.
+
+**Offline ingest** (a script, never on the reply path):
+
+1. Read the CSV. The assumed columns are episode, speaker, and line; the
+   mapping is confirmed when the file arrives.
+2. Normalize speaker names (`RICK`, `Rick Sanchez` → `rick`).
+3. Cut **exchanges**: windows of 4–8 consecutive lines in which the target
+   character speaks at least twice. A Rick-and-Morty exchange counts for both
+   characters.
+4. **Tag with Jev in batch.** For each exchange, one request with:
+   - an emotion Choice (the same set as `turn_emotion`, doc 04 §1)
+   - a scenario Choice (`banter`, `argument`, `explaining`, `panic`,
+     `comforting`, `bragging`, `goodbye`, `other`)
+   - Nouls for brief behaviours (`joke`, `disagreement`, `confusion`,
+     `interruption`, `topic_switch`)
+
+   This makes "tag-based retrieval" (MVP) possible without hand-tagging
+   thousands of lines.
+5. Store as `Example { id, characterId, episode, lines[], tags[] }` in SQLite.
+
+**At reply time:** pick up to `maxExamples` (start: 3) whose emotion matches the
+turn's `turn_emotion`, preferring a matching scenario. Ties are broken with a
+seeded draw, so the same examples don't repeat every turn.
+
+**Voice vs format.** Show lines are *spoken, multi-party* dialogue, not text
+messages. Examples teach **voice**: vocabulary, attitude, catchphrases, how
+the character treats the other person. **Texting format** (short, lowercase,
+split messages, occasional typos) comes from `speechStyle` and the prompt. The
+prompt labels examples as "how <name> talks", not "how <name> texts", so the
+LLM doesn't copy screenplay formatting.
+
+**Persona** (`CharacterProfile.persona`) is written once by hand (an
+LLM-drafted version, reviewed, is fine). It is never derived at runtime.
 
 ## 6. Unresolved conversation items
 
@@ -150,8 +193,9 @@ version is `v+1`.
 A scheduled message retains `conversationVersion` and `generationId`. Before
 send:
 
-- version mismatch → replan (context was invalidated),
-- context retrieval for replan failed → degrade to immediate context.
+- version mismatch → cancel. The turn that bumped the version runs its own
+  decision and context build, so the gate does not replan.
+- context retrieval for that new build fails → degrade to immediate context.
 
 The scheduler never inspects context content; it only carries the version the
 Interaction Manager checks.

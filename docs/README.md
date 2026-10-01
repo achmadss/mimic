@@ -43,29 +43,49 @@ feature list.
    message, timer expiry, activity change) enters a single **Interaction
    Manager**, which processes events **serially per conversation**. This alone
    removes most race conditions, so exotic concurrency machinery is not needed.
+   Five primitives: Event Log, Conversation State, Scheduler (which *is* the
+   durable pending-action queue), Interaction Manager, Character State Engine.
 3. **A conversation is an append-only log with a version counter.** User turn
-   completion and topic change bump the version. Every generated message
-   records the version it was built from. The scheduler refuses to send a
-   message whose version no longer matches. This is the whole stale-response
-   solution — no `stateVersion` + `generationId` + `actionId` explosion.
+   completion bumps the version. Every generated message
+   records the version it was built from; pending messages Jev chooses to keep
+   are re-stamped with the new version. The Interaction Manager refuses to send
+   a message whose version no longer matches. This is the whole stale-response
+   solution — no `stateVersion` or `contextVersion` on top of it.
 4. **Timing is a contract.** Jev picks a *category* (`instant`, `fast`,
    `normal`, `slow`, `very_slow`) or a bounded delay range. The System turns
    that into a concrete millisecond timestamp with jitter and typing time. Jev
    never says "execute at 14:03:22.417".
-5. **One structured Jev call per turn** decides respond/wait/topic/pace/
-   message-split/cancel. Dozens of micro-calls are replaced by one decision
-   object.
+5. **One Jev request per turn.** Jev (TypeSafe's System One model) answers
+   many typed questions (respond/wait, topic, pace, message count, each pending
+   message, context relevance) in a single request. Code turns the
+   probabilities into one `BehaviorDecision`.
 6. **The LLM returns structured messages, not a blob.** It returns an ordered
    list of short message fragments with optional self-corrections. Splitting a
    thought across messages is a plan the System can schedule and cancel.
 7. **Context is planned, not dumped.** A Context Planner (Jev-informed) picks a
    horizon and relevance; a Context Builder retrieves, orders, dedupes, and
-   enforces a token budget. First implementation is topic + recency + tags. No
-   vector database until measured need.
+   enforces a token budget. First implementation is recency + topic + tags;
+   keyword scoring next. No vector database until measured need.
 8. **Routine and activity are one state machine, not four variables.**
    `activity` is persisted; `availability`, `interruptibility`, and
    `responseSpeed` are derived from it. `energy`, `patience`, and `sociability`
    are dropped until proven.
+
+## Implementation decisions
+
+| Area | Decision |
+|---|---|
+| Runtime | TypeScript on Node.js ≥ 20 |
+| Storage | SQLite, single process. Each event append and its state update share one transaction; scheduled actions are a table. |
+| Recovery | Load state tables and scheduled actions on boot. The event log is for audit, memory, and debugging, not for rebuilding state. |
+| Jev | TypeSafe `jev-latest` via `@typesafe-ai/sdk` (doc 04 §1) |
+| LLM | `LLMClient` interface; the first implementation is **OpenAI-compatible** `/chat/completions` (`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`). Testing runs on OpenCode Go (`https://opencode.ai/zen/go/v1`). See doc 04 §2. |
+| Platforms | Telegram and Discord, **direct messages only**, behind one `DeliveryAdapter` interface. Group chats are out of scope. |
+| Characters | **Rick** and **Morty** (Rick and Morty). Two profiles, two bots per platform. Voice examples come from show transcripts (CSV), ingested offline (doc 05 §5.1). |
+| Language | English |
+| Identity | One bot account per character per platform. A conversation is `(characterId, platform, chatId)`; the same person on two platforms is two conversations. |
+| Time | Each character has a configured IANA timezone; routine and `localTime` use it. |
+| Clock | All timing goes through an injected `Clock`, so tests use a fake clock. |
 
 ## What we deliberately refuse
 
