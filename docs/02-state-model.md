@@ -20,8 +20,18 @@ type CharacterState = {
 - `activity` — drives everything else. Set by the Routine Engine or by explicit
   events. **Persisted** because it is the source for derived values. Only the
   Routine Engine writes it, so conversations never race on character state.
-- `mood` — **optional, transient**. Set by Jev only when it clearly matters.
-  If unused, drop it. It is not derived and not needed for timing.
+  The truth is `activityAt(profile, now)` in `src/character/routine.ts`, a pure
+  function of the character's daily `routine` and the clock; this row is that
+  answer cached, with an `ACTIVITY_CHANGED` trail. The engine reconciles the two
+  at boot, so a boundary crossed while the process was down resolves to the slot
+  running *now* rather than being fired late.
+- `mood` — **optional, transient**. Set by Jev only when it clearly matters:
+  one `mood` Choice per user turn, and an answer only overwrites the stored
+  value when it beats the chance bar, so "it usually does not change" is enforced
+  by the gate rather than by the wording. It is persisted (a value the next turn
+  must see cannot be transient) and expires after 45 minutes, which is
+  `moodNow`'s job. A *category* is not decayed the way attention's magnitude is:
+  it either is still true or it is over.
 
 ### ConversationState (per conversation)
 
@@ -100,6 +110,14 @@ type ScheduledAction =
   | { kind: "activity_change"; characterId: string; activity: Activity }
   | { kind: "routine_transition"; characterId: string; slot: string }
 ```
+
+`routine_transition` is **not** a row in `actions`, and `activity_change` has no
+emitter yet. `actions` is conversation-scoped (`conversation_id NOT NULL`) and
+both are character-scoped, and neither needs durability: the transition is
+derivable from the clock, so a restart recomputes it — strictly better than
+firing the missed one under the catch-up rule in doc 03 §6. The Routine Engine
+holds one in-memory `Clock` timer per character instead. Explicit overrides
+("they are at a party tonight") would be a second writer on the same sync path.
 
 ### Supporting types
 

@@ -87,9 +87,11 @@ export function buildQuestions(trigger: Trigger, pending: { id: string; text: st
     };
     q.mood = {
       type: "choice",
-      // The gate, not just this wording, is what keeps it stable: an answer only overwrites the
-      // stored mood when it beats chance, so "it usually does not change" is enforced by the maths.
-      instructions: "What is `character`'s mood right now, given `mood` and `currentTurn`? Most of the time a conversation does not change it.",
+      // Stability comes from the gate, not from the wording: an answer only overwrites the stored
+      // mood when it beats the chance bar. Saying so in the question instead pushed Jev to `neutral`
+      // at 0.87-0.95 on turns where the character was visibly annoyed, which made the feature inert.
+      // Ask for the state they are in as the turn ends, and let the gate decide whether it moved.
+      instructions: "Reading `character`'s persona, how they text, and what just happened in `currentTurn`, what mood are they in as they finish reading it?",
       criteria: {
         neutral: "No particular mood",
         happy: "Buoyant, in a good mood",

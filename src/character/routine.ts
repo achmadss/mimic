@@ -10,11 +10,11 @@ import type { CharacterProfile } from "./profile.ts";
  * replayed late. The stored `character_state.activity` is a cache of this with an event trail.
  */
 
-/** Minutes since local midnight, in `tz`, at instant `at`. */
-function localMinutes(tz: string, at: number): number {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(at);
-  const hour = Number(parts.find((p) => p.type === "hour")!.value) % 24; // some ICU builds emit "24" at midnight
-  return hour * 60 + Number(parts.find((p) => p.type === "minute")!.value);
+/** Seconds since local midnight, in `tz`, at instant `at`. */
+function localSeconds(tz: string, at: number): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(at);
+  const num = (type: string) => Number(parts.find((p) => p.type === type)!.value);
+  return (num("hour") % 24) * 3600 + num("minute") * 60 + num("second"); // some ICU builds emit "24" at midnight
 }
 
 /** `YYYY-MM-DD` in `tz`, as the seed for that day's jitter. */
@@ -24,12 +24,18 @@ function localDayKey(tz: string, at: number): string {
 
 /**
  * The instant `"HH:MM"` happens on the local day containing `at`.
+ *
+ * The whole-second part matters: dropping it makes the day's start inherit whatever seconds the
+ * caller happened to ask at, so "09:14" would be 09:14:25 for a query made at 09:13:25 and
+ * 09:14:07 for one made at 09:13:07 — the boundary would move depending on when you looked at it.
+ *
  * ponytail: the day's offset is taken at `at`, so a boundary landing inside a DST jump on the same
  * local day is an hour out. Adding a timezone library for a bedtime is not worth the dependency.
  */
 function atLocalTime(tz: string, at: number, hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);
-  return at - localMinutes(tz, at) * 60_000 + (h * 60 + m) * 60_000;
+  const whole = at - (at % 1000);
+  return whole - localSeconds(tz, whole) * 1000 + (h * 60 + m) * 60_000;
 }
 
 interface Boundary {

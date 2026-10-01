@@ -40,6 +40,19 @@ test("jitter is seeded per character per day: stable within a day, different acr
   assert.ok(Math.abs(b - at("07:00", 1)) <= 45 * 60_000);
 });
 
+test("a boundary does not inherit the seconds of the moment you ask", () => {
+  const one: CharacterProfile = { ...rick, routine: [{ start: "07:00", activity: "idle", jitterMin: 0 }] };
+  const seven = at("07:00");
+  assert.equal(slotBoundaries(one, at("12:00"))[0], seven);
+  // the same local day, asked at a different second — the answer must not move
+  assert.equal(slotBoundaries(one, at("12:00") + 25_000)[0], seven);
+  assert.equal(slotBoundaries(one, at("12:00") + 59_999)[0], seven);
+  assert.equal(slotBoundaries(one, at("00:00") + 7_000)[0], seven);
+  // and a query one millisecond either side of the boundary lands on the right side of it
+  assert.equal(activityAt(nap, at("20:00") - 1).activity, "idle");
+  assert.equal(activityAt(nap, at("20:00")).activity, "sleeping");
+});
+
 test("nextTransitionAt is the next boundary strictly after now, and always in the future", () => {
   assert.equal(nextTransitionAt(nap, at("12:00")), at("20:00"));
   assert.equal(nextTransitionAt(nap, at("20:00")), at("07:00", 1)); // strictly after, so not itself

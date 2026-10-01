@@ -16,22 +16,22 @@ Every feature from `DOC.md` §2. Layer codes: **Sys** = System, **Jev**,
 | 2.9 | Topic switching / latching | Yes | Jev | LLM + Sys | Conversation State | Med | High | MVP (basic), Next (full) |
 | 2.10 | Conversation momentum | Yes | Sys (derived) | Jev | Timestamps | Low | Med | Next |
 | 2.11 | Character activity | Yes | Sys | Jev | Character State engine | Med | High | MVP |
-| 2.12 | Device/local time routine | Yes | Sys | Jev | Routine Engine | Med | High | MVP (coarse), Next (fine) |
+| 2.12 | Device/local time routine | Yes | Sys | Jev | Routine Engine | Med | High | Built |
 | 2.13 | Availability | Yes | Sys (derived) | Jev | Derived from activity | Low | Med | MVP (derived) |
 | 2.14 | Interruptibility | Yes | Sys (derived) | Jev | Derived from activity | Low | High | MVP |
 | 2.15 | Attention capture | Yes | Jev | Sys | Per-conversation scalar | Low | Med | MVP |
 | 2.16 | Response speed | Yes | Sys (derived) | Jev (pace) | Derived + Scheduler | Low | High | MVP |
 | 2.17 | Not responding | Yes | Jev | Sys | Behavior decision | Low | High | MVP |
 | 2.18 | Delayed follow-up | Yes | Jev | Sys | Scheduler (reuse) | Low | Med | Next |
-| 2.19 | Daily routine | Yes | Sys | Jev | Routine Engine + Scheduler | Med | High | MVP (coarse) |
+| 2.19 | Daily routine | Yes | Sys | Jev | Routine Engine (own timers, not `actions`) | Med | High | Built |
 | 2.20 | Social state (energy etc.) | Yes | — | — | (drop) | Low | Low | Probably unnecessary |
-| 2.21 | Mood | Yes | Jev | LLM | Optional transient | Low | Med | Experimental |
+| 2.21 | Mood | Yes | Jev | LLM prompt | Expires on a 45 min TTL | Low | Med | Built (deliberately small) |
 | 2.22 | Character personality | Yes | Sys (profile) | LLM | Config | Low | High | MVP |
 | 2.23 | Example conversations | Yes | Sys (retrieval) | LLM | Context store | Med | Med | MVP (tag/manual), Next (keyword) |
-| 2.24 | Character quirks | Yes | LLM | Sys (seeded tendency) | Character voice + RNG | Low | Med | Next |
+| 2.24 | Character quirks | Yes | LLM | Sys (seeded tendency) | Profile `quirks` + prompt | Low | Med | Built (repeats suppressed) |
 | 2.25 | User behavior modeling | Yes | Sys (derived) | Jev | Event Log projection | Med | Med | Experimental |
 | 2.26 | Relationship state | Yes | Sys (persist) | Jev + LLM | Memory/conversation state | Med | Med | Next |
-| 2.27 | Typing/presence indicators | Yes | Sys | — | Scheduler view | Low | Med | Next (platform-dependent) |
+| 2.27 | Typing/presence indicators | Yes | Sys | — | View of a scheduled message's `dueAt` | Low | Med | Built |
 | 2.28 | Stale response detection | Yes | Sys | — | conversationVersion | Low | High | MVP |
 | 2.29 | Event-driven architecture | Yes | Sys | — | Event Log + serial queue | Low | High | MVP (in-process only) |
 
@@ -62,10 +62,13 @@ per-conversation scalar with decay computed on read, not a state machine.
 yet. Persisting them creates drift and complexity. Drop until a concrete
 behavior *requires* one; then derive it from activity + routine + time.
 
-### 2.21 Mood — experimental
+### 2.21 Mood — built, still deliberately small
 
-Explicit mood that nothing reads is decoration. Keep it only as an optional
-input to LLM voice when Jev sets it. Do not build a mood engine.
+Explicit mood that nothing reads is decoration, so it is kept to exactly one
+reader: a line in the LLM prompt (`You are feeling annoyed right now`) when it is
+not neutral. **There is still no mood engine** — Jev answers one Choice per user
+turn, a torn answer is ignored, and the value expires on a 45-minute TTL instead
+of decaying or interacting with anything. Nothing in the timing path reads it.
 
 ### 2.23 / 30.13 Examples — retrieve this way
 
@@ -88,11 +91,17 @@ On the chosen platforms:
 
 - **Typing** — Telegram `sendChatAction("typing")` lasts ~5 s and Discord
   `sendTyping` lasts ~10 s; both must be re-sent while the typing window is
-  open. Start it at `dueAt − typingTime`.
+  open. Start it at `dueAt − typingTime`. **Built**: the manager holds one
+  in-memory timer per conversation, refreshed every `typingRefreshMs` (4000 /
+  8000), and re-reads the queued message each tick so a cancelled or rescheduled
+  message stops or moves its own indicator. Nothing is persisted: if the process
+  dies mid-typing the indicator expires on the platform by itself.
 - **Presence** — Telegram bots have no online/last-seen. Discord bots do have
   a status (online / idle / dnd), and it can mirror derived `availability`.
   That status is global for the bot account, which fits one bot per
-  character.
+  character. **Built** for Discord: `PRESENCE` maps `available → online`,
+  `busy → idle`, `away → idle`, `sleeping → invisible`, and it is set on every
+  routine transition and once at boot.
 
 ### 2.28 Stale detection — one counter
 

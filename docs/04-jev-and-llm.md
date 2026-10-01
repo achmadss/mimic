@@ -39,6 +39,15 @@ type JevState = {
 
 Jev sees **summaries and candidates**, never raw database rows (§30.2).
 
+Jev is also given **the clock**, under `since`, in milliseconds relative to now:
+`lastUserMsgAgoMs`, `lastBotMsgAgoMs`, `turnStartedAgoMs`, `turnLastMsgAgoMs`,
+`activityChangedAgoMs`, `moodChangedAgoMs`, `oldestPendingInMs`, plus `agoMs`
+per recent message and `dueInMs` per queued one. Without these a reply five
+seconds later mid-flow and one eight hours later out of the blue were the
+*same input* — every number already existed in the database and was thrown away
+before the call. This is what lets `respond_mode` mean "they have been waiting
+all day" instead of guessing from the words alone.
+
 ### Questions (one request)
 
 | Key | Type | Options / levels | Feeds |
@@ -57,10 +66,25 @@ Jev sees **summaries and candidates**, never raw database rows (§30.2).
 | `pending_<id>` | Choice, one per pending msg | `continue`, `cancel`, `delay`, `replace` | `pendingActions` |
 | `relevant_<id>` | Noul, one per candidate | "relevant to the current turn" | `contextPlan.include` |
 | `turn_emotion` | Choice | `neutral`, `excited`, `annoyed`, `sad`, `confused`, `joking`, `serious` (same set as example tags) | example selection (doc 05 §5.1) |
-| `mood` | Choice (experimental) | `neutral`, `happy`, `tired`, `annoyed`, `excited`, `distracted` | `mood` |
+| `mood` | Choice | `neutral`, `happy`, `tired`, `annoyed`, `excited`, `distracted` | `mood` |
 
 Questions are added only when they apply: no `pending_*` without pending
-messages, and no `topic_action` on a `followup_due` trigger.
+messages, no `topic_action` on a `followup_due` trigger, and no `mood` outside a
+`user_turn` — the decision reads an answer only on a trigger that asked for it.
+
+### The triggers
+
+| Trigger | Asked | What it does |
+|---|---|---|
+| `user_turn` | everything above | the normal turn |
+| `followup_due` | everything except `topic_action` and `mood` | the character messaging again on their own |
+| `activity_changed` | `pace`, `pending_<id>` | **what is already queued is re-decided; nothing is written.** No reply-shaping question is asked, because no reply is being written, and `decide` pins `respondMode` to `no_reply` so the LLM is never reached |
+
+`mood` is a `Choice` over the six levels, and the *gate* is what keeps it
+stable, not the wording: an answer only overwrites the stored mood when it beats
+the chance bar, so a torn answer leaves the character as they were. `neutral` is
+the fallback and maps to `undefined` — "unchanged" — so a mood nobody moved
+expires on its own TTL rather than being reset every turn.
 
 ### BehaviorDecision (assembled by the System)
 

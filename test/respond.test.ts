@@ -30,7 +30,7 @@ test("schedules fragments stamped with the current version, increasing dueAt, ac
 
 test("clamps: message count, correction as extra fragment, empty correction dropped, max chars", async () => {
   const { deps, store, jev, llm, convId, clock } = makeDeps();
-  jev.next = { message_count: choice("1") };
+  jev.next = { message_count: choice("1"), pending_keep: choice("continue") };
   llm.outputs = [{ messages: [{ text: "see u tomorow", correction: "*tomorrow" }, { text: "extra" }] }];
   await respond(deps, convId, "user_turn", turn(["bye"], clock.now()));
   assert.deepEqual(store.pendingBotMessages(convId).map((m) => m.text), ["see u tomorow", "*tomorrow"]);
@@ -144,4 +144,29 @@ test("splitToCount: rescues a paragraph the model wrote where Jev asked for beat
   assert.deepEqual(splitToCount("a. b.", 5), ["a. b."]);
   assert.deepEqual(splitToCount("just one thought here", 3), ["just one thought here"]);
   assert.deepEqual(splitToCount("", 2), [""]);
+});
+
+test("a line the model re-sent that is already queued is dropped", async () => {
+  const { deps, clock, store, llm, jev, convId } = makeDeps();
+  jev.next = { message_count: choice("2"), pending_keep: choice("continue") };
+  const queued: BotMessage = { id: "keep", conversationId: convId, generationId: "g0", conversationVersion: 0, text: "night, dipshit", order: 0, status: "scheduled", dueAt: clock.now() + 60_000 };
+  store.insertBotMessage(queued);
+  deps.scheduler.schedule({ id: "keep", conversationId: convId, kind: "send_message", dueAt: queued.dueAt });
+  llm.outputs = [{ messages: [{ text: "Night, dipshit!" }, { text: "wear the gloves" }] }];
+
+  await respond(deps, convId, "user_turn", turn(["ok. night"], clock.now()));
+  const texts = store.pendingBotMessages(convId).filter((m) => m.id !== "keep").map((m) => m.text);
+  assert.deepEqual(texts, ["wear the gloves"], "the duplicate is dropped, the new line is not");
+});
+
+test("dropping every generated line still leaves the queued ones on their way", async () => {
+  const { deps, clock, store, llm, jev, convId } = makeDeps();
+  jev.next = { message_count: choice("1"), pending_keep: choice("continue") };
+  const queued: BotMessage = { id: "keep", conversationId: convId, generationId: "g0", conversationVersion: 0, text: "night, dipshit", order: 0, status: "scheduled", dueAt: clock.now() + 60_000 };
+  store.insertBotMessage(queued);
+  deps.scheduler.schedule({ id: "keep", conversationId: convId, kind: "send_message", dueAt: queued.dueAt });
+  llm.outputs = [{ messages: [{ text: "night, dipshit." }] }];
+
+  await respond(deps, convId, "user_turn", turn(["ok"], clock.now()));
+  assert.deepEqual(store.pendingBotMessages(convId).map((m) => m.id), ["keep"]);
 });

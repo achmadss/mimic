@@ -226,7 +226,7 @@ whole turn. It is never a separate call per message.
 | **Scheduler failure / restart** | Load state and scheduled-action rows, re-arm timers. Catch-up policy: actions overdue by less than the catch-up window fire immediately in `order`; older sends are cancelled, and older follow-ups/routine actions fire once. |
 | **Delivery failure** | Retry only on unambiguous errors (e.g. 429 with `retry_after`, 5xx before the request was accepted). On an ambiguous failure (timeout), Discord retries with `nonce` = `messageId` + `enforce_nonce`, which dedupes. Telegram has no idempotency, so it does **not** retry: the message is marked `failed`, and a missing message beats a duplicate. Messages found in `sending` after a crash follow the same rule. |
 | **User message during generation** | Queued serially. The finished output is scheduled at the old version; the next turn's decision keeps/cancels it and the version gate voids anything not kept. |
-| **Activity change while response pending** | Recompute timing; if the new activity is "sleeping", Jev may cancel/delay. Reply text is unaffected unless the version changed. |
+| **Activity change while response pending** | The Routine Engine calls `onActivityChanged`, which re-runs `respond` with the `activity_changed` trigger for **each conversation of that character that has a message in flight** — none at all when nothing is pending, which is the common case. That trigger asks Jev only `pace` and `pending_<id>`: nothing is being written, so no reply-shaping question is asked and the LLM is never called. Jev may `continue`, `cancel`, `delay` or `replace` each queued message; **Jev unavailable cancels them all**, which is the documented safe default (a stale reply is worse than a missing one). A kept message's `dueAt` is *not* retimed — Jev decides per message, and the recompute-timing half of this row is deliberately unimplemented. |
 | **Context retrieval fails** | Degrade to immediate context (recent messages + current turn). Never block the reply on optional context. |
 | **Jev context planning fails** | Use deterministic default horizon (`recent`). |
 
@@ -264,6 +264,8 @@ reconcile `sending`, re-arm. No replay, no distributed consensus.
 | Jev score confidence | 0.4 (an `importance` score has no option count to normalise against) |
 | Jev Noul threshold | 0.7 |
 | Jev follow-up threshold | 0.6 — `follow_up` is scored lower than the other nouls, so it needs its own |
+| Typing indicator | opens at `dueAt − typingTime`, refreshed every 4 s (Telegram) / 8 s (Discord) |
+| Mood TTL | 45 min from the turn that set it |
 
 Notes from live tuning (2026-10-01, 19 real turns):
 
@@ -283,3 +285,23 @@ Notes from live tuning (2026-10-01, 19 real turns):
   "important to the user" or above.
 - **Latency** from user message to first reply measured p50 14.4 s. Long single messages dominate it
   (generation time), which is why splitting a reply into 2–3 messages makes the bot feel faster.
+
+Notes from the character-realism pass (2026-10-01, 10 real turns across 4 routine boundaries):
+
+- **A routine boundary inherited the seconds of the moment you asked.** The day's start was computed
+  by subtracting only *whole minutes* from now, so `"09:14"` resolved to 09:14:25 for a query made at
+  09:13:25 and 09:14:07 for one made at 09:13:07 — the boundary moved depending on when you looked at
+  it, and the engine's timer fired 26 s late. The day start has to be whole seconds. Worth noting
+  that every unit test passed: they all asked at `:00`.
+- **A question whose wording argues for the inert option gets the inert option.** `mood` was worded
+  "most of the time a conversation does not change it", and Jev answered `neutral` at 0.87–0.95
+  across six real turns — *including* ones where the character was visibly annoyed. Same failure as
+  `follow_up` and `message_count` before it. Asking for the state they are in rather than for the
+  change, and letting the confidence gate do the stabilising, moved it to `annoyed` on 4 of 5 turns.
+- **The model re-sends a line that is already queued**, even with the kept-pending list in front of
+  it verbatim: it answered a kept "night, dipshit" with another "night, dipshit". Now dropped in
+  code, the same kind of hygiene as `humanize`.
+- **The activity-change path works end to end.** Verified twice: `ACTIVITY_CHANGED` → a decision with
+  only `pace` + `pending_*` asked, `respondMode` pinned to `no_reply`, the queued message kept and
+  sent on its original `dueAt`, and **no second LLM call**.
+- **`activity_since` now lands exactly on the boundary** (16:22:00.000), which is the fix above.

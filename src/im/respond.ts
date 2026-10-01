@@ -180,9 +180,18 @@ function scheduleReply(
   const conv = store.getConversation(conversationId)!;
   const maxChars = config.maxChars[conv.platform];
 
+  // The model re-sends a line that is already queued often enough to matter, even with the list in
+  // front of it — measured live: it answered a kept "night, dipshit" with another "night, dipshit".
+  // Dropping it in code is the same kind of hygiene as `humanize`: a rule the model cannot opt out of.
+  // ponytail: exact match after lowercasing and stripping punctuation. A paraphrase still gets
+  // through; near-duplicate detection is not worth the false positives it brings.
+  const normalized = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+  const alreadyQueued = new Set(kept.map((m) => normalized(m.text)));
+
   const texts: string[] = [];
   output.messages.slice(0, decision.messageCount).forEach((m, k) => {
     const styled = applyStyle(m.text.trim(), styles[k]).slice(0, maxChars);
+    if (alreadyQueued.has(normalized(styled))) return;
     // only when the model under-delivered on a count Jev had already chosen
     const pieces = output.messages.length === 1 && decision.messageCount > 1 ? splitToCount(styled, decision.messageCount) : [styled];
     texts.push(...pieces);

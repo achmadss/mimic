@@ -43,8 +43,8 @@ characters/README.md               NEW  how to author one, token env vars, platf
 src/
   types.ts                         mood type, CharacterState.mood
   character/profile.ts             wider schema, skips `_`-prefixed files
-  character/routine.ts             NEW  activityAt / nextTransitionAt / slotTimes
-  character/routine-engine.ts      NEW  owns timers + character_state writes (needs a class; below)
+  character/routine.ts             NEW  slotBoundaries / activityAt / nextTransitionAt
+  character/routine-engine.ts      NEW  owns one timer per character + character_state writes
   character/mood.ts                NEW  moodNow (TTL)
   jev/questions.ts                 mood question, activity_changed question set
   jev/state.ts                     timestamps + mood into Jev's state
@@ -56,7 +56,7 @@ src/
   delivery/telegram.ts             showTyping
   delivery/discord.ts              showTyping, setPresence
   main.ts                          start/stop the routine engine
-test/  routine.test.ts, mood.test.ts, typing.test.ts + edits to character/jev/llm/manager
+test/  routine.test.ts, routine-engine.test.ts, mood.test.ts + edits to character/jev/llm/respond/manager
 ```
 
 ---
@@ -259,7 +259,7 @@ git commit -am "feat: add a transient mood to character state"
 **Files:**
 - Create: `src/character/routine-engine.ts`
 - Modify: `src/main.ts` (start/stop), `src/store.ts` (`conversationsForCharacter`)
-- Test: `test/manager.test.ts`
+- Test: `test/routine-engine.test.ts`
 
 **Interfaces:**
 - Produces: `class RoutineEngine { constructor(o: { store; clock; profiles; onTransition(c: { characterId; from: Activity; to: Activity }): void; log }); start(): void; stop(): void; sync(characterId: string): Activity }`.
