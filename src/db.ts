@@ -6,7 +6,9 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS character_state (
   character_id TEXT PRIMARY KEY,
   activity TEXT NOT NULL,
-  activity_since INTEGER NOT NULL
+  activity_since INTEGER NOT NULL,
+  mood TEXT,
+  mood_changed_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY,
@@ -56,9 +58,19 @@ CREATE TABLE IF NOT EXISTS events (
 );
 `;
 
+/** Additive column migrations — `CREATE TABLE IF NOT EXISTS` cannot widen a table that already exists. */
+const MIGRATIONS: [table: string, column: string, type: string][] = [
+  ["character_state", "mood", "TEXT"],
+  ["character_state", "mood_changed_at", "INTEGER"],
+];
+
 export function openDb(path: string): DB {
   const db = new Database(path);
   db.pragma("journal_mode = WAL");
   db.exec(SCHEMA);
+  for (const [table, column, type] of MIGRATIONS) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
   return db;
 }

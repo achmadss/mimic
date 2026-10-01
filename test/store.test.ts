@@ -94,7 +94,22 @@ test("turn buffer and actions round-trip", () => {
   assert.equal(s.getAction("a1")!.kind, "turn_quiet");
 });
 
-test("character state defaults to idle", () => {
+test("character state defaults to idle with no mood", () => {
   const s = fresh();
-  assert.deepEqual(s.getCharacterState("rick", 7), { characterId: "rick", activity: "idle", activitySince: 7 });
+  assert.deepEqual(s.getCharacterState("rick", 7), { characterId: "rick", activity: "idle", activitySince: 7, mood: null, moodChangedAt: null });
+});
+
+test("character state round-trips activity and mood", () => {
+  const s = fresh();
+  s.getCharacterState("rick", 7);
+  s.saveCharacterState({ characterId: "rick", activity: "sleeping", activitySince: 100, mood: "tired", moodChangedAt: 150 });
+  assert.deepEqual(s.getCharacterState("rick", 200), { characterId: "rick", activity: "sleeping", activitySince: 100, mood: "tired", moodChangedAt: 150 });
+});
+
+test("conversationsForCharacter returns only that character's conversations", () => {
+  const s = fresh();
+  s.getOrCreateConversation("rick", "cli", "local");
+  s.getOrCreateConversation("rick", "telegram", "42");
+  s.getOrCreateConversation("morty", "cli", "local");
+  assert.deepEqual(s.conversationsForCharacter("rick").map((c) => c.conversationId).sort(), ["rick:cli:local", "rick:telegram:42"]);
 });

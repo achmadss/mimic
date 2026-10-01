@@ -30,10 +30,16 @@ export interface ConversationState {
   attentionRaisedAt: number | null;
 }
 
+/** Doc 02 §1. Set by Jev, persisted, and expired on a TTL by `moodNow`. */
+export const MOODS = ["neutral", "happy", "tired", "annoyed", "excited", "distracted"] as const;
+export type Mood = (typeof MOODS)[number];
+
 export interface CharacterState {
   characterId: string;
   activity: Activity;
   activitySince: number;
+  mood: Mood | null;
+  moodChangedAt: number | null;
 }
 
 /** A row exists only while the turn is collecting. */

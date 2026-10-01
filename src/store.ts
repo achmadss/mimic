@@ -77,7 +77,17 @@ export class Store {
       .prepare("INSERT OR IGNORE INTO character_state (character_id, activity, activity_since) VALUES (?, 'idle', ?)")
       .run(characterId, now);
     const r = this.db.prepare("SELECT * FROM character_state WHERE character_id = ?").get(characterId) as Row;
-    return { characterId, activity: r.activity, activitySince: r.activity_since };
+    return { characterId, activity: r.activity, activitySince: r.activity_since, mood: r.mood ?? null, moodChangedAt: r.mood_changed_at ?? null };
+  }
+
+  saveCharacterState(cs: CharacterState) {
+    this.db
+      .prepare("UPDATE character_state SET activity = ?, activity_since = ?, mood = ?, mood_changed_at = ? WHERE character_id = ?")
+      .run(cs.activity, cs.activitySince, cs.mood, cs.moodChangedAt, cs.characterId);
+  }
+
+  conversationsForCharacter(characterId: string): ConversationState[] {
+    return (this.db.prepare("SELECT * FROM conversations WHERE character_id = ?").all(characterId) as Row[]).map(toConversation);
   }
 
   /** Returns false when the id already exists (platform redelivery). */
