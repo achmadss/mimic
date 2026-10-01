@@ -54,12 +54,17 @@ export function makeDeps() {
 
 export class FakeAdapter implements DeliveryAdapter {
   sent: { chatId: string; text: string; key: string }[] = [];
+  typed: string[] = [];
   fail: Error | null = null;
+  readonly typingRefreshMs = 1000;
   constructor(readonly platform: Platform = "cli", readonly idempotent = true) {}
   async send(chatId: string, text: string, key: string) {
     if (this.fail) throw this.fail;
     this.sent.push({ chatId, text, key });
     return { platformMessageId: String(this.sent.length) };
+  }
+  async showTyping(chatId: string) {
+    this.typed.push(chatId);
   }
   async start(_onMessage: (m: IncomingText) => void) {}
   async stop() {}

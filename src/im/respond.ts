@@ -16,6 +16,24 @@ import type { Store } from "../store.ts";
 import { delayOffset, replyOffsets } from "../timing.ts";
 import type { BehaviorDecision, BotMessage, ConversationState, LLMOutput, Trigger } from "../types.ts";
 
+/**
+ * Jev chooses the beat count before the model writes, so sometimes the model answers "3" with one
+ * paragraph — a wall of text where three short messages belonged. Splitting only where the model
+ * already put a sentence break keeps its phrasing intact; cutting on commas instead would produce
+ * "i know," / "right?".
+ *
+ * ponytail: one message in, N messages out, sentence boundaries only, and it never merges a burst
+ * the model chose. If a wrong count ever becomes common, have the model tag its own beats rather
+ * than guess harder here.
+ */
+export function splitToCount(text: string, want: number): string[] {
+  const parts = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (want < 2 || parts.length < want) return [text];
+  const per = Math.ceil(parts.length / want);
+  const out = Array.from({ length: want }, (_, i) => parts.slice(i * per, (i + 1) * per).join(" ")).filter(Boolean);
+  return out.length >= 2 ? out : [text];
+}
+
 export interface Deps {
   store: Store;
   scheduler: Scheduler;
@@ -97,7 +115,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
   let output: LLMOutput;
   try {
     output = await d.llm.generate(
-      buildPrompt({ profile, decision, trigger, activity, localTime, topic: conv.topic, recent, turn: texts, keptPending: kept.map((m) => m.text), styles }),
+      buildPrompt({ profile, decision, trigger, activity, mood, localTime, topic: conv.topic, recent, turn: texts, keptPending: kept.map((m) => m.text), styles }),
       // hashed: the provider gets a stable per-conversation routing key, not the user's platform chat id
       { sessionId: createHash("sha256").update(conversationId).digest("hex").slice(0, 32) },
     );
@@ -164,7 +182,10 @@ function scheduleReply(
 
   const texts: string[] = [];
   output.messages.slice(0, decision.messageCount).forEach((m, k) => {
-    texts.push(applyStyle(m.text.trim(), styles[k]).slice(0, maxChars));
+    const styled = applyStyle(m.text.trim(), styles[k]).slice(0, maxChars);
+    // only when the model under-delivered on a count Jev had already chosen
+    const pieces = output.messages.length === 1 && decision.messageCount > 1 ? splitToCount(styled, decision.messageCount) : [styled];
+    texts.push(...pieces);
     const correction = m.correction?.trim();
     if (correction) texts.push(humanize(correction).slice(0, maxChars));
   });

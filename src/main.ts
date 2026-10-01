@@ -1,4 +1,6 @@
+import { availability, PRESENCE } from "./character/derived.ts";
 import { loadProfiles } from "./character/profile.ts";
+import { RoutineEngine } from "./character/routine-engine.ts";
 import { realClock } from "./clock.ts";
 import { DEFAULT_CONFIG, type Config } from "./config.ts";
 import { openDb } from "./db.ts";
@@ -10,7 +12,7 @@ import { InteractionManager } from "./im/manager.ts";
 import { httpJevClient } from "./jev/client.ts";
 import { openAICompatibleClient, type StructuredMode } from "./llm/client.ts";
 import { Store } from "./store.ts";
-import type { Platform } from "./types.ts";
+import type { Activity, Platform } from "./types.ts";
 
 function env(name: string): string {
   const v = process.env[name];
@@ -56,8 +58,10 @@ if (cliIdx >= 0) {
 }
 if (adapters.size === 0) throw new Error("no adapters: set bot token env vars, or run `npm run cli -- rick`");
 
+const log = (m: string, e?: unknown) => console.error(`[mimic] ${m}`, e ?? "");
+
 const im = new InteractionManager(
-  { store, clock: realClock, jev, llm, profiles, config: configFromEnv(), log: (m, e) => console.error(`[mimic] ${m}`, e ?? "") },
+  { store, clock: realClock, jev, llm, profiles, config: configFromEnv(), log },
   (characterId, platform) => {
     const a = adapters.get(key(characterId, platform));
     if (!a) throw new Error(`no adapter for ${characterId} on ${platform}`);
@@ -65,13 +69,35 @@ const im = new InteractionManager(
   },
 );
 
+/** Derived from activity, so it is mirror-only and never stored (doc 06 §2.27). */
+const setPresence = (characterId: string, activity: Activity) => {
+  for (const platform of ["telegram", "discord"] as const) {
+    adapters.get(key(characterId, platform))?.adapter.setPresence?.(PRESENCE[availability(activity)]);
+  }
+};
+
+const routine = new RoutineEngine({
+  store,
+  clock: realClock,
+  profiles,
+  onTransition: ({ characterId, to }) => {
+    setPresence(characterId, to);
+    im.onActivityChanged(characterId);
+  },
+  log,
+});
+
 for (const { characterId, adapter } of adapters.values()) {
   await adapter.start((m) => im.receive(characterId, adapter.platform, m));
   console.error(`[mimic] ${characterId} listening on ${adapter.platform}`);
 }
 await im.recover();
+routine.start();
+// start() reports only what moved; a character who did not change still needs their status set
+for (const characterId of profiles.keys()) setPresence(characterId, store.getCharacterState(characterId, realClock.now()).activity);
 
 process.on("SIGINT", async () => {
+  routine.stop();
   for (const { adapter } of adapters.values()) await adapter.stop();
   process.exit(0);
 });

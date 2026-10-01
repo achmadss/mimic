@@ -1,5 +1,6 @@
 import type { DeliveryLookup, IncomingText } from "../delivery/types.ts";
 import { Scheduler } from "../scheduler.ts";
+import { typingTimeMs } from "../timing.ts";
 import type { ActionRow, BotMessage, ConversationState, Platform } from "../types.ts";
 import { respond, type Deps } from "./respond.ts";
 
@@ -9,6 +10,7 @@ export class InteractionManager {
   private readonly deps: Deps;
   private queues = new Map<string, Promise<void>>();
   private inFlight = new Set<Promise<void>>();
+  private typing = new Map<string, unknown>();
 
   constructor(base: Omit<Deps, "scheduler">, private readonly delivery: DeliveryLookup) {
     this.scheduler = new Scheduler(base.store, base.clock, (row) => this.enqueue(row.conversationId, () => this.onTimer(row)));
@@ -61,6 +63,18 @@ export class InteractionManager {
     this.scheduler.armAll();
   }
 
+  /**
+   * The Routine Engine moved a character. Anything already queued for them was timed against the old
+   * activity, so it is re-decided here — one Jev call per conversation that actually has something
+   * in flight, and none at all (the common case) when nothing is pending.
+   */
+  onActivityChanged(characterId: string) {
+    for (const conv of this.deps.store.conversationsForCharacter(characterId)) {
+      if (!this.deps.store.pendingBotMessages(conv.conversationId).length) continue;
+      void this.enqueue(conv.conversationId, () => respond(this.deps, conv.conversationId, "activity_changed", null));
+    }
+  }
+
   private enqueue(conversationId: string, job: () => Promise<void> | void): Promise<void> {
     const prev = this.queues.get(conversationId) ?? Promise.resolve();
     const next = prev.then(job).catch((e) => this.deps.log(`conversation ${conversationId}: handler failed`, e));
@@ -68,9 +82,46 @@ export class InteractionManager {
     this.inFlight.add(next);
     void next.finally(() => {
       this.inFlight.delete(next);
-      if (this.queues.get(conversationId) === next) this.queues.delete(conversationId);
+      if (this.queues.get(conversationId) === next) {
+        this.queues.delete(conversationId);
+        // once the queue is empty, re-derive typing from whatever is left scheduled
+        this.syncTyping(conversationId);
+      }
     });
     return next;
+  }
+
+  /**
+   * Typing is a view of the earliest queued message (doc 06 §2.27): it opens at
+   * `dueAt − typingTime`, refreshes while the platform's indicator is expiring, and closes when the
+   * message goes out or stops being scheduled. Nothing is persisted, because nothing needs recovering
+   * — if the process dies mid-typing, the indicator expires on the platform by itself.
+   */
+  private syncTyping(conversationId: string) {
+    const { store, clock } = this.deps;
+    this.stopTyping(conversationId);
+    const conv = store.getConversation(conversationId);
+    const next = store.pendingBotMessages(conversationId)[0];
+    if (!conv || !next) return;
+    const adapter = this.delivery(conv.characterId, conv.platform);
+    if (!adapter.showTyping) return;
+    const refresh = adapter.typingRefreshMs ?? 4000;
+
+    const tick = () => {
+      // re-read every tick: a message cancelled or rescheduled after this started owns its own indicator
+      const cur = store.getBotMessage(next.id);
+      const t = clock.now();
+      if (!cur || cur.status !== "scheduled" || t >= cur.dueAt) return this.stopTyping(conversationId);
+      if (t >= cur.dueAt - typingTimeMs(cur.text)) void adapter.showTyping!(conv.chatId);
+      this.typing.set(conversationId, clock.setTimeout(tick, Math.max(250, Math.min(refresh, cur.dueAt - t))));
+    };
+    this.typing.set(conversationId, clock.setTimeout(tick, Math.max(0, next.dueAt - typingTimeMs(next.text) - clock.now())));
+  }
+
+  private stopTyping(conversationId: string) {
+    const h = this.typing.get(conversationId);
+    if (h !== undefined) this.deps.clock.clearTimeout(h);
+    this.typing.delete(conversationId);
   }
 
   /** A message left `sending` by a crash: resend only where the platform can dedupe it. */

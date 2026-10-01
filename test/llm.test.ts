@@ -95,7 +95,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   const rick = loadProfiles("characters").get("rick")!;
   const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55 }), messageCount: 2 };
   const msgs = buildPrompt({
-    profile: rick, decision, trigger: "user_turn", activity: "idle", localTime: "Thu 04:00", topic: "portal gun",
+    profile: rick, decision, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: "portal gun",
     recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], styles: [{ lowercase: false, typo: false, correct: false }, { lowercase: false, typo: false, correct: false }],
   });
   assert.equal(msgs[0].role, "system");
@@ -107,7 +107,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
 
   // the per-message budget comes from the character's own ceiling, scaled by Jev's length class
   const short = buildPrompt({
-    profile: rick, decision: { ...decision, messageCount: 3, messageLength: "terse" }, trigger: "user_turn", activity: "idle", localTime: "Thu 04:00", topic: null,
+    profile: rick, decision: { ...decision, messageCount: 3, messageLength: "terse" }, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null,
     recent: [], turn: ["sup"], keptPending: [], styles: [],
   });
   const budget = Math.max(20, Math.round(rick.speechStyle.maxCharsPerMessage * 0.12)); // 20-char floor
@@ -115,12 +115,38 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   assert.match(short[0].content, /One thought per message/);
   assert.match(short[0].content, /exactly 3 message/);
   const long = buildPrompt({
-    profile: rick, decision: { ...decision, messageCount: 1, messageLength: "long" }, trigger: "user_turn", activity: "idle", localTime: "Thu 04:00", topic: null,
+    profile: rick, decision: { ...decision, messageCount: 1, messageLength: "long" }, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null,
     recent: [], turn: ["sup"], keptPending: [], styles: [],
   });
   assert.match(long[0].content, new RegExp(`under about ${rick.speechStyle.maxCharsPerMessage} characters`));
 
-  const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], styles: [] });
+  const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], styles: [] });
   assert.equal(fu.length, 1);
   assert.match(fu[0].content, /on your own/);
+});
+
+const PROMPT_CTX = () => {
+  const rick = loadProfiles("characters").get("rick")!;
+  const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55 }), messageCount: 1 };
+  return { rick, base: { profile: rick, decision, trigger: "user_turn" as const, activity: "idle" as const, localTime: "Thu 04:00", topic: null, recent: [], turn: ["sup"], keptPending: [], styles: [] } };
+};
+
+test("prompt: the authored character and the current mood reach the model", () => {
+  const { base } = PROMPT_CTX();
+  const neutral = buildPrompt({ ...base, mood: "neutral" })[0].content;
+  assert.match(neutral, /about 70, scientist/);
+  assert.match(neutral, /You are arrogant, sarcastic, brutally honest/);
+  assert.match(neutral, /You dislike Jerry, authority/);
+  assert.match(neutral, /You do these without thinking about it/);
+  assert.match(neutral, /intelligence 10\/10, patience 2\/10/);
+  assert.doesNotMatch(neutral, /feeling/, "a neutral mood is not a mood, and saying so is noise");
+  assert.match(buildPrompt({ ...base, mood: "annoyed" })[0].content, /feeling annoyed right now/);
+});
+
+test("prompt: a tic already used in this conversation drops off the list", () => {
+  const { base } = PROMPT_CTX();
+  const withHistory = (text: string) => buildPrompt({ ...base, mood: "neutral", recent: [{ role: "bot" as const, text }] })[0].content;
+  assert.match(withHistory("nothing yet"), /Things you sometimes say \(sparingly, never every message\): c'mon, whatever, listen\./);
+  assert.match(withHistory("c'mon, listen"), /: whatever\./);
+  assert.doesNotMatch(withHistory("c'mon whatever listen"), /Things you sometimes say/);
 });

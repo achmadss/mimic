@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { typingTimeMs } from "../src/timing.ts";
 import { choice, noul, setupIM } from "./helpers.ts";
 
 const LONG = 200_000; // longer than any normal reply delay
@@ -171,4 +172,76 @@ test("recovery: overdue sends within catch-up fire; older ones are cancelled", a
   await soon.im.recover();
   await soon.tick(0);
   assert.equal(soon.store.getBotMessage(m2.id)!.status, "sent");
+});
+
+test("activity change re-decides a queued reply: a character who has gone to sleep drops it", async () => {
+  const t = setupIM();
+  const m = await firstReplyPending(t);
+  t.store.saveCharacterState({ characterId: "rick", activity: "sleeping", activitySince: t.clock.now(), mood: null, moodChangedAt: null });
+  const before = t.jev.calls.length;
+  t.jev.next = { [`pending_${m.id}`]: choice("cancel") };
+  t.im.onActivityChanged("rick");
+  await t.im.drain();
+
+  assert.equal(t.jev.calls.length, before + 1);
+  const q = t.jev.calls[before].questions;
+  assert.ok(!("respond_mode" in q) && !("topic_action" in q) && !("message_count" in q), "an activity change asks nothing about writing a reply");
+  assert.ok("pending_" + m.id in q);
+  assert.equal(t.jev.calls[before].state.activity, "sleeping");
+  assert.equal(t.store.getBotMessage(m.id)!.status, "cancelled");
+  assert.equal(t.llm.calls.length, 1, "the LLM must not run again: nothing new is being written");
+  await t.tick(LONG);
+  assert.deepEqual(t.adapter.sent, []);
+});
+
+test("activity change with nothing queued does not call Jev at all", async () => {
+  const t = setupIM();
+  t.store.getOrCreateConversation("rick", "cli", "local");
+  t.im.onActivityChanged("rick");
+  await t.im.drain();
+  assert.equal(t.jev.calls.length, 0);
+});
+
+test("Jev unavailable during an activity change cancels the queued reply rather than sending it", async () => {
+  const t = setupIM();
+  const m = await firstReplyPending(t);
+  t.store.saveCharacterState({ characterId: "rick", activity: "sleeping", activitySince: t.clock.now(), mood: null, moodChangedAt: null });
+  t.jev.next = new Error("jev is down");
+  t.im.onActivityChanged("rick");
+  await t.im.drain();
+  assert.equal(t.store.getBotMessage(m.id)!.status, "cancelled");
+  await t.tick(LONG);
+  assert.deepEqual(t.adapter.sent, []);
+});
+
+test("typing opens inside the message's own window and closes when it goes out", async () => {
+  const t = setupIM();
+  t.jev.next = { pace: choice("slow") };
+  t.llm.outputs = [{ messages: [{ text: "on my way" }] }];
+  t.say("you coming?");
+  await t.tick(2500);
+  const [m] = t.store.pendingBotMessages(t.convId);
+  const opensAt = m.dueAt - typingTimeMs(m.text);
+
+  assert.deepEqual(t.adapter.typed, [], "does not type for a message that is a minute away");
+  await t.tick(opensAt - t.clock.now() + 1);
+  assert.ok(t.adapter.typed.length > 0, "types once the window opens");
+
+  await t.tick(LONG);
+  assert.equal(t.store.getBotMessage(m.id)!.status, "sent");
+  const afterSend = t.adapter.typed.length;
+  await t.tick(LONG);
+  assert.equal(t.adapter.typed.length, afterSend, "stops typing once the message is delivered");
+});
+
+test("typing follows a cancelled message and stops with it", async () => {
+  const t = setupIM();
+  const m = await firstReplyPending(t);
+  const opensAt = m.dueAt - typingTimeMs(m.text);
+  await t.tick(opensAt - t.clock.now() + 1);
+  assert.ok(t.adapter.typed.length > 0);
+  t.store.updateBotMessage({ ...t.store.getBotMessage(m.id)!, status: "cancelled" });
+  const typed = t.adapter.typed.length;
+  await t.tick(LONG);
+  assert.equal(t.adapter.typed.length, typed);
 });

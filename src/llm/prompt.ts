@@ -1,6 +1,6 @@
 import type { CharacterProfile } from "../character/profile.ts";
 import type { MessageStyle } from "../character/style.ts";
-import type { Activity, BehaviorDecision, MessageLength, TopicAction, Trigger } from "../types.ts";
+import type { Activity, BehaviorDecision, MessageLength, Mood, TopicAction, Trigger } from "../types.ts";
 import type { ChatMessage } from "./client.ts";
 
 export interface PromptInput {
@@ -8,6 +8,8 @@ export interface PromptInput {
   decision: BehaviorDecision;
   trigger: Trigger;
   activity: Activity;
+  /** Already passed through `moodNow`: neutral when nothing is lingering. */
+  mood: Mood;
   localTime: string;
   topic: string | null;
   recent: { role: "user" | "bot"; text: string }[]; // history BEFORE the current turn
@@ -32,21 +34,42 @@ const TOPIC_INSTRUCTION: Record<TopicAction, string> = {
   ask: "Ask them about the new topic they raised.",
 };
 
+/** The authored personality, as prompt lines. Empty lists drop out. */
+function whoTheyAre(p: CharacterProfile): string[] {
+  const i = p.identity;
+  const stats = p.stats && Object.entries(p.stats).map(([k, v]) => `${k} ${v}/10`).join(", ");
+  return [
+    `You are ${i.age}, ${i.occupation}. ${i.background}`,
+    `The person you are texting: ${i.relationship}`,
+    p.traits.length ? `You are ${p.traits.join(", ")}.` : "",
+    p.likes.length ? `You like ${p.likes.join(", ")}.` : "",
+    p.dislikes.length ? `You dislike ${p.dislikes.join(", ")}.` : "",
+    p.quirks.length ? `You do these without thinking about it: ${p.quirks.join("; ")}.` : "",
+    stats ? `Your attributes out of 10 — ${stats}.` : "",
+  ].filter(Boolean);
+}
+
 export function buildPrompt(p: PromptInput): ChatMessage[] {
   const s = p.profile.speechStyle;
   const typoMsgs = p.styles.map((st, k) => (st.typo ? k + 1 : 0)).filter(Boolean);
   const fixMsgs = p.styles.map((st, k) => (st.correct ? k + 1 : 0)).filter(Boolean);
   const perMessage = Math.max(20, Math.round(s.maxCharsPerMessage * LENGTH_FRACTION[p.decision.messageLength]));
+  // a verbal tic that has just been used is no longer a tic, it is a catchphrase
+  const used = new Set(p.recent.flatMap((m) => m.text.toLowerCase().match(/[a-z']+/g) ?? []));
+  const slang = s.slang.filter((w) => !used.has(w.toLowerCase()));
+
   const system = [
     `You are ${p.profile.name}, texting one person in a private chat.`,
     `Who you are: ${p.profile.persona}`,
+    ...whoTheyAre(p.profile),
     "Write like a real person texting, not a script and not an assistant.",
     "One thought per message. A person fires off separate thoughts as separate messages, so keep each one short and do not pack two ideas into one message, and do not write paragraphs. A longer reply is more messages, never a longer message. Split it the way you would actually type it: a word on its own is a whole message if that is what you would send.",
     `Each message is ${p.decision.messageLength}, so keep it under about ${perMessage} characters.`,
     "Never use an em dash. Never narrate an action or a sound at yourself, like *burp* or *sighs* or *laughs*: you are a person typing, not a script with stage directions. No markdown, no asterisks, no emphasis.",
-    s.slang.length ? `Things you sometimes say (sparingly, never every message): ${s.slang.join(", ")}.` : "",
+    slang.length ? `Things you sometimes say (sparingly, never every message): ${slang.join(", ")}.` : "",
     "Never say you are an AI, a bot, or a character in a show.",
     `Right now it is ${p.localTime} for you and you are ${p.activity}.`,
+    p.mood === "neutral" ? "" : `You are feeling ${p.mood} right now, and it shows in how you write.`,
     p.topic ? `Current topic: ${p.topic}.` : "",
     `Send exactly ${p.decision.messageCount} message(s).`,
     typoMsgs.length

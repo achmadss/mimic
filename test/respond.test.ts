@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { respond } from "../src/im/respond.ts";
+import { respond, splitToCount } from "../src/im/respond.ts";
 import type { BotMessage } from "../src/types.ts";
 import { choice, makeDeps, noul, score } from "./helpers.ts";
 
@@ -130,4 +130,18 @@ test("a smaller raise never lowers stored attention, and the change is logged", 
     store.events(convId).filter((e) => e.type === "ATTENTION_CHANGED").map((e) => e.payload.attention),
     [1, 1],
   );
+});
+
+test("splitToCount: rescues a paragraph the model wrote where Jev asked for beats", () => {
+  assert.deepEqual(splitToCount("fine. dont go friday. you go in there and its two of you.", 3), [
+    "fine.",
+    "dont go friday.",
+    "you go in there and its two of you.",
+  ]);
+  assert.deepEqual(splitToCount("a. b. c. d. e. f.", 2), ["a. b. c.", "d. e. f."]);
+  // it only ever splits: never a merge, never more than asked for, never a guess with nothing to cut on
+  assert.deepEqual(splitToCount("one. two.", 1), ["one. two."]);
+  assert.deepEqual(splitToCount("a. b.", 5), ["a. b."]);
+  assert.deepEqual(splitToCount("just one thought here", 3), ["just one thought here"]);
+  assert.deepEqual(splitToCount("", 2), [""]);
 });
