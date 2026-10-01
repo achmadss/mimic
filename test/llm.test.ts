@@ -93,7 +93,7 @@ test("4xx (non-429) is not retried; exhausting retries throws", async () => {
 
 test("prompt: persona, plan, history roles, follow-up framing", () => {
   const rick = loadProfiles("characters").get("rick")!;
-  const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceConfidence: 0.5, noulThreshold: 0.7, followUpThreshold: 0.55 }), messageCount: 2 };
+  const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55 }), messageCount: 2 };
   const msgs = buildPrompt({
     profile: rick, decision, trigger: "user_turn", activity: "idle", localTime: "Thu 04:00", topic: "portal gun",
     recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], styles: [{ lowercase: false, typo: false, correct: false }, { lowercase: false, typo: false, correct: false }],
@@ -104,6 +104,21 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   assert.match(msgs[0].content, /portal gun/);
   assert.deepEqual(msgs.slice(1).map((m) => m.role), ["user", "assistant", "user"]);
   assert.equal(msgs[msgs.length - 1].content, "my boss quit");
+
+  // the per-message budget comes from the character's own ceiling, scaled by Jev's length class
+  const short = buildPrompt({
+    profile: rick, decision: { ...decision, messageCount: 3, messageLength: "terse" }, trigger: "user_turn", activity: "idle", localTime: "Thu 04:00", topic: null,
+    recent: [], turn: ["sup"], keptPending: [], styles: [],
+  });
+  const budget = Math.max(20, Math.round(rick.speechStyle.maxCharsPerMessage * 0.12)); // 20-char floor
+  assert.match(short[0].content, new RegExp(`under about ${budget} characters`));
+  assert.match(short[0].content, /One thought per message/);
+  assert.match(short[0].content, /exactly 3 message/);
+  const long = buildPrompt({
+    profile: rick, decision: { ...decision, messageCount: 1, messageLength: "long" }, trigger: "user_turn", activity: "idle", localTime: "Thu 04:00", topic: null,
+    recent: [], turn: ["sup"], keptPending: [], styles: [],
+  });
+  assert.match(long[0].content, new RegExp(`under about ${rick.speechStyle.maxCharsPerMessage} characters`));
 
   const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], styles: [] });
   assert.equal(fu.length, 1);

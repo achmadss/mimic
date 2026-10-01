@@ -1,4 +1,4 @@
-import { PACES, PENDING_DECISIONS, RESPOND_MODES, TOPIC_ACTIONS, type BehaviorDecision, type Pace, type Trigger } from "../types.ts";
+import { MESSAGE_LENGTHS, PACES, PENDING_DECISIONS, RESPOND_MODES, TOPIC_ACTIONS, type BehaviorDecision, type Pace, type Trigger } from "../types.ts";
 import type { JevAnswers } from "./client.ts";
 
 export interface DecideContext {
@@ -6,7 +6,8 @@ export interface DecideContext {
   pendingIds: string[];
   basePace: Pace;
   maxMessages: number;
-  choiceConfidence: number;
+  choiceMargin: number;
+  scoreConfidence: number;
   noulThreshold: number;
   followUpThreshold: number;
 }
@@ -20,11 +21,14 @@ export function decide(answers: JevAnswers | null, c: DecideContext): BehaviorDe
   const choice = <T extends string>(key: string, allowed: readonly T[], fallback: T): T => {
     const x = a[key];
     if (x?.type !== "choice") return fallback;
-    // Gate on the probability of the chosen option, not on `confidence`. Jev's confidence is a
-    // margin that shrinks as a question gains options, so a 3-way answer tops out around 0.35
-    // (measured) and could never clear a 0.5 bar — every such field silently took its fallback.
+    // Gate on the probability of the chosen option, not on `confidence`: Jev's confidence is a
+    // margin that shrinks as a question gains options, so a 3-way answer tops out around 0.35 and
+    // could never clear an absolute 0.5 bar. Chance for a k-way question is 1/k, so compare against
+    // that — a flat distribution still falls back, a real preference is honoured whatever the width.
+    // the question's own option list is the true k — Jev's probability map can come back sparse
+    const options = allowed.length || Object.keys(x.probabilities ?? {}).length || 1;
     const p = x.probabilities?.[x.choice] ?? x.confidence;
-    return p >= c.choiceConfidence && (allowed as readonly string[]).includes(x.choice) ? (x.choice as T) : fallback;
+    return p >= c.choiceMargin / options && (allowed as readonly string[]).includes(x.choice) ? (x.choice as T) : fallback;
   };
   const yes = (key: string, threshold = c.noulThreshold) => {
     const x = a[key];
@@ -41,9 +45,10 @@ export function decide(answers: JevAnswers | null, c: DecideContext): BehaviorDe
     followUp: wantsFollowUp ? { afterMs: FOLLOW_UP_MS[choice("follow_up_after", FOLLOW_UP_KEYS, "1h")] } : undefined,
     topicAction: choice("topic_action", TOPIC_ACTIONS, "continue"),
     pace: choice("pace", PACES, c.basePace),
-    messageCount: Math.min(c.maxMessages, Number(choice("message_count", ["1", "2", "3"] as const, "1"))),
+    messageCount: Math.min(c.maxMessages, Number(choice("message_count", ["1", "2", "3", "4", "5"] as const, "1"))),
+    messageLength: choice("message_length", MESSAGE_LENGTHS, "normal"),
     askQuestion: yes("ask_question"),
-    attentionRaise: imp?.type === "score" && imp.confidence >= c.choiceConfidence && imp.score >= 2 ? imp.score / 3 : undefined,
+    attentionRaise: imp?.type === "score" && imp.confidence >= c.scoreConfidence && imp.score >= 2 ? imp.score / 3 : undefined,
     // a stale reply is worse than a missing one: unsure → cancel
     pendingActions: c.pendingIds.map((id) => ({ messageId: id, action: choice(`pending_${id}`, PENDING_DECISIONS, "cancel") })),
     answers,

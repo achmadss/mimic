@@ -6,6 +6,8 @@
   "speechStyle": {
     "lowercase": 0.8,
     "typoRate": 0.05,
+    "correctionRate": 0.25,
+    "maxCharsPerMessage": 150,
     "slang": [
       "c'mon",
       "whatever",

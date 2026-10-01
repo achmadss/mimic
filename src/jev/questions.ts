@@ -37,15 +37,27 @@ export function buildQuestions(trigger: Trigger, pending: { id: string; text: st
         very_slow: "Takes a couple of minutes",
       },
     },
+    message_length: {
+      type: "choice",
+      instructions: "Considering how `character` texts and how they feel right now, how much would they put into each single message?",
+      criteria: {
+        terse: "A couple of words. 'fine.' 'no way.' 'yeah.'",
+        short: "One short line, one thought, nothing else",
+        normal: "A sentence or two",
+        long: "Several sentences, when they are worked up or explaining something",
+      },
+    },
     message_count: {
       type: "choice",
       // Without criteria to choose between them Jev answers 1 every time, so a character with a lot
       // to say writes one 300-character paragraph instead of texting like a person.
-      instructions: "Into how many separate short messages would `character` break this reply?",
+      instructions: "Into how many separate messages would `character` break this reply? People fire off one thought per message rather than writing a paragraph.",
       criteria: {
-        "1": "One short line is the whole reply",
+        "1": "The whole reply is one message",
         "2": "A line, then a separate afterthought or a follow-up question",
-        "3": "A burst of short messages: a reaction, then a follow-up, then the point",
+        "3": "A short burst: a reaction, then the point, then the tail of it",
+        "4": "Broken right up, several messages of only a few words each",
+        "5": "Firing off fragments back to back, barely pausing",
       },
     },
     ask_question: { type: "noul", instructions: "Should the reply ask the user something?" },

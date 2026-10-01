@@ -15,9 +15,6 @@ export interface MessageStyle {
   correct: boolean;
 }
 
-/** Of the typos a character makes, the share they actually go back and fix. */
-export const CORRECTION_RATE = 0.3;
-
 /** The gestures a model reaches for when it narrates itself. */
 const STAGE_DIRECTION =
   /^\s*(?:burps?|sighs?|laughs?|chuckles?|coughs?|groans?|shrugs?|nods?|pauses?|smirks?|grins?|snorts?|hiccups?|yawns?|blinks?|exhales?|inhales?|mumbles?|mutters?|whispers?|slurs?|sips?|slurps?|clears throat|long pause|beat)\s*$/i;
@@ -30,7 +27,7 @@ export function styleFor(profile: CharacterProfile, seed: string, count: number)
     return {
       lowercase: seededUnit(seed, "case", String(k)) < s.lowercase,
       typo,
-      correct: typo && seededUnit(seed, "fix", String(k)) < CORRECTION_RATE,
+      correct: typo && seededUnit(seed, "fix", String(k)) < s.correctionRate,
     };
   });
 }

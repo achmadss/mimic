@@ -1,6 +1,6 @@
 import type { CharacterProfile } from "../character/profile.ts";
 import type { MessageStyle } from "../character/style.ts";
-import type { Activity, BehaviorDecision, TopicAction, Trigger } from "../types.ts";
+import type { Activity, BehaviorDecision, MessageLength, TopicAction, Trigger } from "../types.ts";
 import type { ChatMessage } from "./client.ts";
 
 export interface PromptInput {
@@ -17,8 +17,12 @@ export interface PromptInput {
   styles: MessageStyle[];
 }
 
-/** A chat message is a line or two, not a paragraph. */
-const CHAT_CHARS = 180;
+/**
+ * How much of the character's own per-message ceiling they use, by the length Jev picked.
+ * The ceiling is personality (`speechStyle.maxCharsPerMessage`); Jev says which part of it
+ * this particular reply calls for.
+ */
+const LENGTH_FRACTION: Record<MessageLength, number> = { terse: 0.12, short: 0.35, normal: 0.65, long: 1 };
 
 const TOPIC_INSTRUCTION: Record<TopicAction, string> = {
   continue: "Stay on the current topic.",
@@ -32,10 +36,13 @@ export function buildPrompt(p: PromptInput): ChatMessage[] {
   const s = p.profile.speechStyle;
   const typoMsgs = p.styles.map((st, k) => (st.typo ? k + 1 : 0)).filter(Boolean);
   const fixMsgs = p.styles.map((st, k) => (st.correct ? k + 1 : 0)).filter(Boolean);
+  const perMessage = Math.max(20, Math.round(s.maxCharsPerMessage * LENGTH_FRACTION[p.decision.messageLength]));
   const system = [
     `You are ${p.profile.name}, texting one person in a private chat.`,
     `Who you are: ${p.profile.persona}`,
-    `Texting style: write like a real person texting, not a script and not an assistant. Keep each message to a line or two, under ${CHAT_CHARS} characters. A longer thought becomes more messages, not a longer paragraph.`,
+    "Write like a real person texting, not a script and not an assistant.",
+    "One thought per message. A person fires off separate thoughts as separate messages, so keep each one short and do not pack two ideas into one message, and do not write paragraphs. A longer reply is more messages, never a longer message. Split it the way you would actually type it: a word on its own is a whole message if that is what you would send.",
+    `Each message is ${p.decision.messageLength}, so keep it under about ${perMessage} characters.`,
     "Never use an em dash. Never narrate an action or a sound at yourself, like *burp* or *sighs* or *laughs*: you are a person typing, not a script with stage directions. No markdown, no asterisks, no emphasis.",
     s.slang.length ? `Things you sometimes say (sparingly, never every message): ${s.slang.join(", ")}.` : "",
     "Never say you are an AI, a bot, or a character in a show.",

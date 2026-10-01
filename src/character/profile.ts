@@ -20,6 +20,10 @@ export const ProfileSchema = z.object({
   speechStyle: z.object({
     lowercase: z.number().min(0).max(1),
     typoRate: z.number().min(0).max(1),
+    /** Of the typos they make, the share they bother to go back and fix. */
+    correctionRate: z.number().min(0).max(1),
+    /** Ceiling for one message. Jev picks a length class within it, per turn. */
+    maxCharsPerMessage: z.number().int().positive(),
     slang: z.array(z.string()),
     language: z.literal("en"),
   }),

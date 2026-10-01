@@ -8,12 +8,14 @@ export interface Config {
   catchUpMs: number;
   recentMessages: number;
   /**
-   * Minimum probability the winning option must carry. Compared against the probability of the
-   * option Jev picked, not its `confidence` margin. A k-way question is uniform at 1/k, so the bar
-   * has to clear 0.33 for a 3-way choice; at 0.5 every `message_count` answer took its fallback,
-   * which is the option Jev rated least likely (P=0.16-0.26 against P(3)=0.46).
+   * How far above chance the winning option must be, as a multiple of the 1/k uniform baseline for
+   * a k-way question. An absolute bar cannot serve questions with different option counts: 0.4 is a
+   * clear preference among 3 options but barely above chance among 5, so `message_count` fell back
+   * to 1 on answers that were 1.75x uniform.
    */
-  choiceConfidence: number;
+  choiceMargin: number;
+  /** Minimum confidence for an `importance` score to move attention (scores have no option count). */
+  scoreConfidence: number;
   noulThreshold: number;
   /**
    * `follow_up` needs its own cutoff. It is a rarer event than the other noul questions and Jev
@@ -29,10 +31,11 @@ export const DEFAULT_CONFIG: Config = {
   quietMs: 2500,
   maxTurnMs: 20_000,
   maxDelayMs: 120_000,
-  maxMessages: 3,
+  maxMessages: 5,
   catchUpMs: 300_000,
   recentMessages: 20,
-  choiceConfidence: 0.4,
+  choiceMargin: 1.2,
+  scoreConfidence: 0.4,
   noulThreshold: 0.7,
   followUpThreshold: 0.6,
   maxChars: { telegram: 4096, discord: 2000, cli: 2000 },

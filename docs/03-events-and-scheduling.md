@@ -257,10 +257,11 @@ reconcile `sending`, re-arm. No replay, no distributed consensus.
 | Typing time | ~6 chars/s (≈ 70 wpm), capped at 8 s per message |
 | Gap within a burst | 0.8–3 s + typing time of the next fragment |
 | Max normal reply delay | 2 min (follow-ups and routine actions exempt) |
-| Max messages per reply | 3 (+ correction fragments) |
+| Max messages per reply | 5 (+ correction fragments) |
 | Catch-up window | 5 min |
 | Rate limit | ≤ 1 generated reply per user turn; ≤ 30 sends/min per bot |
-| Jev Choice confidence threshold | 0.4 — measured against the probability of the option Jev picked, not its `confidence` margin |
+| Jev choice margin | 1.2 x the 1/k uniform baseline for a k-way question |
+| Jev score confidence | 0.4 (an `importance` score has no option count to normalise against) |
 | Jev Noul threshold | 0.7 |
 | Jev follow-up threshold | 0.6 — `follow_up` is scored lower than the other nouls, so it needs its own |
 
@@ -269,8 +270,12 @@ Notes from live tuning (2026-10-01, 19 real turns):
 - **Jev's `confidence` is a margin, not a probability.** It shrinks as a question gains options:
   a 3-way choice tops out around 0.35 while its winner is 0.4–0.7 likely. Gating on it made every
   `message_count` answer take the fallback — which is the option Jev rated *least* likely. Gate on
-  `probabilities[chosen]` instead. The 0.4 bar sits just above the 1/3 uniform floor of a 3-way
-  question, so a flat distribution still falls back.
+  `probabilities[chosen]` instead, and gate it *relative to chance*: an absolute bar cannot serve
+  questions of different widths, since 0.4 is a clear lead among 3 options but barely above chance
+  among 5. A flat distribution still falls back; a real preference is honoured at any width.
+- **Where a character's own rhythm lives.** `speechStyle.maxCharsPerMessage` is the ceiling for one
+  message (Rick 150, Morty 230) and `correctionRate` is how often they fix a typo they made; Jev
+  picks a `message_length` class per turn (terse/short/normal/long) that scales a fraction of it.
 - **`follow_up` runs lower than `ask_question`** on the same 0–1 scale — over 20 turns, median 0.49
   against 0.61, and a lower ceiling (0.70 against 0.78). At a shared 0.7 cutoff the unprompted
   follow-up fired on 1 turn in 20; the two questions now have separate thresholds.

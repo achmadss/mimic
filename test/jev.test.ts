@@ -5,7 +5,7 @@ import { buildQuestions } from "../src/jev/questions.ts";
 import { FOLLOW_UP_MS, decide, type DecideContext } from "../src/jev/decide.ts";
 
 const ctx = (over: Partial<DecideContext> = {}): DecideContext => ({
-  trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, ...over,
+  trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, ...over,
 });
 const choice = (c: string, confidence = 0.9) => ({ type: "choice" as const, choice: c, confidence, probabilities: { [c]: confidence } });
 const noul = (p: number) => ({ type: "noul" as const, noul: p });
@@ -54,7 +54,7 @@ test("decide: Jev unavailable → safe defaults, every pending message cancelled
 test("decide: confident answers are used, low-confidence ones fall back", () => {
   const answers: JevAnswers = {
     respond_mode: choice("now"),
-    pace: choice("slow", 0.3), // below 0.5 → default
+    pace: choice("slow", 0.2), // 0.2 does not clear 1.2/5 for a 5-way question → default
     message_count: choice("3"),
     topic_action: choice("switch"),
     ask_question: noul(0.8),
@@ -101,7 +101,13 @@ test("decide: a choice is gated on the probability of its own answer, not Jev's 
   // Gating on confidence silently forced messageCount to 1 on every such turn.
   const three = { type: "choice", choice: "3", confidence: 0.11, probabilities: { "1": 0.26, "2": 0.17, "3": 0.57 } } as const;
   assert.equal(decide({ message_count: three }, ctx()).messageCount, 3);
-  // a genuinely flat 3-way answer is uniform at 1/3 and still takes the fallback
-  const torn = { type: "choice", choice: "2", confidence: 0.02, probabilities: { "1": 0.34, "2": 0.33, "3": 0.33 } } as const;
+  // a genuinely flat answer — every option near the 1/5 chance line — still takes the fallback
+  const torn = { type: "choice", choice: "2", confidence: 0.02, probabilities: { "1": 0.21, "2": 0.2, "3": 0.2, "4": 0.2, "5": 0.19 } } as const;
   assert.equal(decide({ message_count: torn }, ctx()).messageCount, 1);
+  // the bar scales with the option count: 0.35 clears chance among 5 options, and would not among 3
+  const wide = { type: "choice", choice: "3", confidence: 0.1, probabilities: { "1": 0.2, "2": 0.2, "3": 0.35, "4": 0.15, "5": 0.1 } } as const;
+  assert.equal(decide({ message_count: wide }, ctx()).messageCount, 3);
+  // the same 0.35 clears chance among 5 options but not among 3, where chance is 0.33
+  const threeWay = { type: "choice", choice: "later", confidence: 0.1, probabilities: { now: 0.4, later: 0.35, no_reply: 0.25 } } as const;
+  assert.equal(decide({ respond_mode: threeWay }, ctx()).respondMode, "now");
 });

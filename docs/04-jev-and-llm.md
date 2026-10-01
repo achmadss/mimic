@@ -48,7 +48,8 @@ Jev sees **summaries and candidates**, never raw database rows (§30.2).
 | `follow_up_after` | Choice | `15m`, `1h`, `3h`, `next_day` | `followUp.afterMs` |
 | `topic_action` | Choice | `continue`, `switch`, `acknowledge_return`, `ignore`, `ask` | `topicAction` |
 | `pace` | Choice | `instant`, `fast`, `normal`, `slow`, `very_slow` | `pace` |
-| `message_count` | Choice | `1`, `2`, `3` | `messageCount` |
+| `message_count` | Choice | `1`–`5` | `messageCount` |
+| `message_length` | Choice | `terse`, `short`, `normal`, `long` | per-message character budget |
 | `ask_question` | Noul | "the reply should ask the user something" | `askQuestion` |
 | `importance` | Score | trivial → urgent (4 levels) | `attentionRaise` |
 | `opens_thread` | Noul | "user mentioned something worth asking about later" | unresolved item |
