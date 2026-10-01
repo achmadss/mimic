@@ -96,7 +96,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceConfidence: 0.5, noulThreshold: 0.7, followUpThreshold: 0.55 }), messageCount: 2 };
   const msgs = buildPrompt({
     profile: rick, decision, trigger: "user_turn", activity: "idle", localTime: "Thu 04:00", topic: "portal gun",
-    recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], styles: [{ lowercase: false, typo: false }, { lowercase: false, typo: false }],
+    recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], styles: [{ lowercase: false, typo: false, correct: false }, { lowercase: false, typo: false, correct: false }],
   });
   assert.equal(msgs[0].role, "system");
   assert.match(msgs[0].content, /Rick Sanchez/);

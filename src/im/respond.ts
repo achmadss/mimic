@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { attentionNow, formatLocalTime, speedMultiplier } from "../character/derived.ts";
-import { applyLowercase, styleFor, type MessageStyle } from "../character/style.ts";
+import { applyStyle, humanize, styleFor, type MessageStyle } from "../character/style.ts";
 import type { CharacterProfile } from "../character/profile.ts";
 import type { Clock } from "../clock.ts";
 import type { Config } from "../config.ts";
@@ -133,9 +133,9 @@ function scheduleReply(
 
   const texts: string[] = [];
   output.messages.slice(0, decision.messageCount).forEach((m, k) => {
-    texts.push(applyLowercase(m.text.trim(), styles[k]).slice(0, maxChars));
+    texts.push(applyStyle(m.text.trim(), styles[k]).slice(0, maxChars));
     const correction = m.correction?.trim();
-    if (correction) texts.push(applyLowercase(correction, styles[k]).slice(0, maxChars));
+    if (correction) texts.push(humanize(correction).slice(0, maxChars));
   });
   store.appendEvent(conversationId, now, "LLM_RESPONSE_GENERATED", { output });
 

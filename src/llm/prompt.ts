@@ -31,17 +31,22 @@ const TOPIC_INSTRUCTION: Record<TopicAction, string> = {
 export function buildPrompt(p: PromptInput): ChatMessage[] {
   const s = p.profile.speechStyle;
   const typoMsgs = p.styles.map((st, k) => (st.typo ? k + 1 : 0)).filter(Boolean);
+  const fixMsgs = p.styles.map((st, k) => (st.correct ? k + 1 : 0)).filter(Boolean);
   const system = [
     `You are ${p.profile.name}, texting one person in a private chat.`,
     `Who you are: ${p.profile.persona}`,
-    `Texting style: write like a real person texting, not a script and not an assistant. Keep each message to a line or two — under ${CHAT_CHARS} characters. A longer thought becomes more messages, not a longer paragraph.`,
+    `Texting style: write like a real person texting, not a script and not an assistant. Keep each message to a line or two, under ${CHAT_CHARS} characters. A longer thought becomes more messages, not a longer paragraph.`,
+    "Never use an em dash. Never narrate an action or a sound at yourself, like *burp* or *sighs* or *laughs*: you are a person typing, not a script with stage directions. No markdown, no asterisks, no emphasis.",
     s.slang.length ? `Things you sometimes say (sparingly, never every message): ${s.slang.join(", ")}.` : "",
     "Never say you are an AI, a bot, or a character in a show.",
     `Right now it is ${p.localTime} for you and you are ${p.activity}.`,
     p.topic ? `Current topic: ${p.topic}.` : "",
     `Send exactly ${p.decision.messageCount} message(s).`,
     typoMsgs.length
-      ? `Make message ${typoMsgs.join(" and ")} contain one small realistic typo, and set that message's "correction" to the fix, e.g. text "i'll see you tomorow" with correction "*tomorrow". Every other "correction" must be null.`
+      ? `Message ${typoMsgs.join(" and ")} must contain one small realistic typo. ` +
+        (fixMsgs.length
+          ? `Then notice it on message ${fixMsgs.join(" and ")} and set that "correction" to the fix, e.g. text "i'll see you tomorow" with correction "*tomorrow". Every other "correction" is null.`
+          : `Do not fix it: leave "correction" null. People don't correct themselves every time.`)
       : `Set every "correction" to null.`,
     p.decision.askQuestion ? "Ask them something." : "",
     p.trigger === "user_turn" ? TOPIC_INSTRUCTION[p.decision.topicAction] : "",
