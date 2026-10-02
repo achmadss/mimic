@@ -24,7 +24,7 @@ function configFromEnv(): Config {
   };
 }
 
-const store = new Store(openDb(process.env.DB_PATH ?? "mimic.db"));
+const store = new Store(openDb(process.env.DB_PATH || "data/mimic.db"));
 const CHARACTERS_DIR = process.env.MIMIC_CHARACTERS ?? "characters";
 const profiles = loadProfiles(CHARACTERS_DIR);
 const log = (m: string, e?: unknown) => console.error(`[mimic] ${m}`, e ?? "");
@@ -47,7 +47,7 @@ if (moved.length) log(`copied ${moved.join(", ")} from .env into the database; t
 const ai = aiClients(setting);
 
 // env, then whatever the dashboard saved on top: the last thing someone set is what runs
-const CONFIG_PATH = process.env.MIMIC_CONFIG ?? "mimic.config.json";
+const CONFIG_PATH = process.env.MIMIC_CONFIG || "data/mimic.config.json";
 const config = configFromEnv();
 applyConfig(config, readConfigFile(CONFIG_PATH));
 

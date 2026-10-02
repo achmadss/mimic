@@ -29,10 +29,10 @@ app settings (see `.env.example`).
   publishes port 8787 on every interface, so other machines can reach it too.
 - **Your data is in `./data`** (database, with keys and tokens; saved settings) and `./characters`.
   Both are mounted, so rebuilding the image loses nothing.
-- **Bringing over an existing database:** stop the bot first, then
-  `mv mimic.db mimic.db-wal mimic.db-shm data/` (the `-wal`/`-shm` files may
-  not exist; that is fine). Without it you start with no voice examples: run
-  `npm run ingest` on the host with `DB_PATH=data/mimic.db`.
+- **Bringing over an older database** (from before it moved to `data/`): stop
+  the bot first, then `mv mimic.db mimic.db-wal mimic.db-shm data/` (the
+  `-wal`/`-shm` files may not exist; that is fine). Without it you start with no
+  voice examples: run `npm run ingest` on the host.
 - Logs: `docker compose logs -f`. Update: `git pull && docker compose up -d --build`.
 
 ## Characters
@@ -86,7 +86,7 @@ While the bot runs, **http://127.0.0.1:8787** is a dashboard for all of it:
   characters can run on different models or accounts. Stored in the database
   and live on the next message. The model is picked from the provider's list,
   which appears once the base URL and API key are saved.
-- **Settings** — every engine knob, saved to `mimic.config.json` (only what
+- **Settings** — every engine knob, saved to `data/mimic.config.json` (only what
   differs from the defaults) and live on the next message. Saved settings win
   over the `MIMIC_*` env overrides.
 - **Conversations** — the messages, queued replies, open threads, facts, notes

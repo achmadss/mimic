@@ -420,7 +420,7 @@ async function settings() {
   const state = structuredClone(config);
   const page = h(`<div><h1>Settings</h1>
     <div id="ai"></div>
-    <p class="sub">Engine tuning, shared by every character. Saved to <code>mimic.config.json</code> and live on the next message. Highlighted = not the default.</p>
+    <p class="sub">Engine tuning, shared by every character. Saved to <code>data/mimic.config.json</code> and live on the next message. Highlighted = not the default.</p>
     <div id="form"></div>
     <div class="bar"><button class="primary" id="save">Save</button><button id="defaults">Reset all to defaults</button><span class="errors" id="err"></span></div></div>`);
   page.querySelector("#ai").replaceWith(aiPanel("default", ai));

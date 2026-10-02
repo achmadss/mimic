@@ -41,7 +41,7 @@ async function tagBatch(jev: JevClient, character: string, batch: Exchange[]): P
 }
 
 async function main() {
-  const store = new Store(openDb(process.env.DB_PATH ?? "mimic.db"));
+  const store = new Store(openDb(process.env.DB_PATH || "data/mimic.db"));
   const profiles = loadProfiles("characters");
   const csvPath = arg("csv") ?? DEFAULT_CSV;
   const limit = num("limit", 2000); // every exchange: the rare registers need the whole show
