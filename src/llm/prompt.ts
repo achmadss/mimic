@@ -35,9 +35,11 @@ const TOPIC_INSTRUCTION: Record<TopicAction, string> = {
   continue: "Stay on the current topic.",
   switch: "Go with the new topic they raised.",
   acknowledge_return: "Briefly acknowledge what they said, then steer back to the current topic.",
-  ignore: "Don't engage with the new topic they raised for now.",
+  ignore: "Don't engage with the new topic they raised for now. You'll come back to it later.",
   ask: "Ask them about the new topic they raised.",
 };
+
+const SETS_ASIDE = new Set<TopicAction>(["ignore", "acknowledge_return"]);
 
 /** The authored personality, as prompt lines. Empty lists drop out. */
 function whoTheyAre(p: CharacterProfile): string[] {
@@ -96,7 +98,9 @@ export function buildPrompt(p: PromptInput): ChatMessage[] {
     'If you switch to a new topic, set "topic" to a 1-4 word label for it; otherwise set "topic" to null.',
     // "this message", not "they mentioned": measured live, the model summarised the open *topic*
     // instead of the thing the user had just said, and stored a thread nobody had raised.
-    'If this message mentioned something you will want to ask about later, set "openThread" to a short 2-6 word summary of that; otherwise set "openThread" to null.',
+    p.trigger === "user_turn" && SETS_ASIDE.has(p.decision.topicAction)
+      ? 'Set "openThread" to a short 2-6 word summary of the new topic they raised, the one you are setting aside.'
+      : 'If this message mentioned something you will want to ask about later, set "openThread" to a short 2-6 word summary of that; otherwise set "openThread" to null.',
     'Reply as JSON: {"messages":[{"text":"...","correction":null}],"topic":null,"openThread":null}',
   ]
     .filter(Boolean)

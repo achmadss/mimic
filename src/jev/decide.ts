@@ -50,18 +50,22 @@ export function decide(answers: JevAnswers | null, c: DecideContext): BehaviorDe
   // Both are read on a user turn only, the one trigger that asks for them: a decision must never
   // read an answer nobody requested.
   const emotion = c.trigger === "user_turn" ? choice("turn_emotion", EMOTIONS, "neutral") : undefined;
+  const topicAction = generating ? choice("topic_action", TOPIC_ACTIONS, "continue") : "continue";
+  // Latching with a return (doc 06 §2.9): a subject set aside is an open thread, so `ask` brings it
+  // back later through the same path as anything else left open. No second store of "parked" topics.
+  const setsAside = topicAction === "ignore" || topicAction === "acknowledge_return";
 
   return {
     respondMode,
     followUp: wantsFollowUp ? { afterMs: FOLLOW_UP_MS[choice("follow_up_after", FOLLOW_UP_KEYS, "1h")] } : undefined,
-    topicAction: generating ? choice("topic_action", TOPIC_ACTIONS, "continue") : "continue",
+    topicAction,
     pace: choice("pace", PACES, c.basePace),
     messageCount: generating ? Math.min(c.maxMessages, Number(choice("message_count", ["1", "2", "3", "4", "5"] as const, "1"))) : 1,
     messageLength: generating ? choice("message_length", MESSAGE_LENGTHS, "normal") : "normal",
     mood: mood === "neutral" ? undefined : mood,
     askQuestion: generating && yes("ask_question"),
     emotion,
-    openThread: c.trigger === "user_turn" && yes("opens_thread", c.openThreadThreshold),
+    openThread: c.trigger === "user_turn" && (setsAside || yes("opens_thread", c.openThreadThreshold)),
     attentionRaise: generating && imp?.type === "score" && imp.confidence >= c.scoreConfidence && imp.score >= 2 ? imp.score / 3 : undefined,
     // a stale reply is worse than a missing one: unsure → cancel
     pendingActions: c.pendingIds.map((id) => ({ messageId: id, action: choice(`pending_${id}`, PENDING_DECISIONS, "cancel") })),

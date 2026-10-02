@@ -76,6 +76,16 @@ test("decide: emotion and the open thread are read on a user turn only", () => {
   assert.equal(decide({ opens_thread: noul(0.9) }, ctx({ trigger: "activity_changed" })).openThread, false);
 });
 
+test("decide: a topic set aside is kept as an open thread, so `ask` can bring it back", () => {
+  for (const action of ["ignore", "acknowledge_return"]) {
+    const d = decide({ topic_action: choice(action), opens_thread: noul(0.1) }, ctx());
+    assert.equal(d.topicAction, action);
+    assert.equal(d.openThread, true, action);
+  }
+  assert.equal(decide({ topic_action: choice("switch"), opens_thread: noul(0.1) }, ctx()).openThread, false);
+  assert.equal(decide({ topic_action: choice("ignore") }, ctx({ trigger: "followup_due" })).openThread, false);
+});
+
 test("decide: Jev unavailable → safe defaults, every pending message cancelled", () => {
   const d = decide(null, ctx({ pendingIds: ["m1", "m2"] }));
   assert.equal(d.respondMode, "now");

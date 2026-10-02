@@ -169,3 +169,11 @@ test("prompt: a tic already used in this conversation drops off the list", () =>
   assert.match(withHistory("c'mon, listen"), /: whatever\./);
   assert.doesNotMatch(withHistory("c'mon whatever listen"), /Things you sometimes say/);
 });
+
+test("prompt: setting a topic aside asks the model to label it as the open thread", () => {
+  const { base } = PROMPT_CTX();
+  const aside = buildPrompt({ ...base, mood: "neutral", decision: { ...base.decision, topicAction: "ignore" } })[0].content;
+  assert.match(aside, /the one you are setting aside/);
+  const normal = buildPrompt({ ...base, mood: "neutral" })[0].content;
+  assert.match(normal, /otherwise set "openThread" to null/);
+});
