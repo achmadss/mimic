@@ -27,7 +27,11 @@ export interface PromptInput {
   /** Long-term memory (doc 05 §1): facts about them, and notes on talk older than `recent`. */
   facts: string[];
   earlier: string[];
+  /** The same person's latest messages on another platform (`memory.elsewhere`). */
+  elsewhere: { platform: string; role: "user" | "bot"; text: string }[];
 }
+
+const APP: Record<string, string> = { telegram: "Telegram", discord: "Discord", cli: "the terminal" };
 
 /**
  * How much of the character's own per-message ceiling they use, by the length Jev picked.
@@ -87,6 +91,9 @@ export function buildPrompt(p: PromptInput): ChatMessage[] {
     ...p.them,
     p.facts.length ? `Things you know about them (some may be out of date): ${p.facts.join(" ")}` : "",
     p.earlier.length ? `Earlier, before the messages below:\n${p.earlier.map((t) => `- ${t}`).join("\n")}` : "",
+    p.elsewhere.length
+      ? `You also text this same person on ${[...new Set(p.elsewhere.map((m) => APP[m.platform] ?? m.platform))].join(" and ")}. The latest there, which you remember:\n${p.elsewhere.map((m) => `${m.role === "user" ? "THEM" : "YOU"} (${APP[m.platform] ?? m.platform}): ${m.text}`).join("\n")}`
+      : "",
     "Never say you are an AI, a bot, or a character in a show.",
     `Right now it is ${p.localTime} for you and you are ${p.activity}.`,
     p.mood === "neutral" ? "" : `You are feeling ${p.mood} right now, and it shows in how you write.`,

@@ -83,6 +83,7 @@ const MIGRATIONS: [table: string, column: string, type: string][] = [
   ["conversations", "unresolved", "TEXT"],
   ["examples", "secondary", "TEXT"],
   ["conversations", "summarized_until", "INTEGER NOT NULL DEFAULT 0"],
+  ["conversations", "person_id", "TEXT"],
 ];
 
 export function openDb(path: string): DB {

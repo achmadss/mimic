@@ -51,18 +51,28 @@ While the bot runs, **http://127.0.0.1:8787** is a dashboard for all of it:
 - **Characters** — every profile field as a form, routine rows included.
   Validated on save, written back to `characters/<id>.json`, and live on the
   next message; the routine is re-armed at once. New characters start from
-  `_template.json`. Token env vars and platform bindings need a restart, and
-  the page says so.
+  `_template.json`.
+- **Bot tokens** — paste a Telegram and/or a Discord token per character. It is
+  checked against the platform, written to `.env` (only the last 4 characters
+  are ever shown), and the bot goes live, swaps, or goes offline at once: no
+  restart for any token or platform change. A rejected token is shown as an
+  error on the character. Two characters cannot share a token.
 - **Settings** — every engine knob, saved to `mimic.config.json` (only what
   differs from the defaults) and live on the next message. Saved settings win
   over the `MIMIC_*` env overrides.
 - **Conversations** — the messages, queued replies, open threads, facts, notes
   and event log of each chat. Delete a single fact or thread, forget a chat's
   memory, or reset it.
+- **Same person, two apps** — on a conversation, link it to the same person's
+  chat with that character on the other platform. Linked chats share facts,
+  notes and how long they have known each other, and each reply sees the
+  latest messages from the other app, so "like I said on Telegram" works ten
+  minutes later. Nothing on Telegram or Discord says two accounts are one
+  person, which is why this is a link you make rather than a guess.
 
 It listens on localhost only. To reach it from elsewhere, set `DASHBOARD_HOST`
 and `DASHBOARD_PASSWORD` together (it refuses to start without the password).
-Tokens are never shown or edited there; they stay in `.env`.
+`npm run cli` never starts a Telegram or Discord bot, even with tokens set.
 
 ### Commands
 

@@ -103,3 +103,21 @@ export function recall(store: Store, conversationId: string, query: string, conf
     summaries: rank(store.memories(conversationId, "summary", 100), config.maxSummaries).sort((a, b) => a.toAt - b.toAt),
   };
 }
+
+export interface ElsewhereMessage extends HistoryMessage {
+  platform: string;
+}
+
+/** The newest messages from this person's other linked chats, oldest first. */
+export function elsewhere(store: Store, conversationId: string, now: number, config: Config): ElsewhereMessage[] {
+  if (!config.crossChatMessages) return [];
+  return store
+    .linkedConversationIds(conversationId)
+    .slice(1)
+    .flatMap((id) => {
+      const platform = store.getConversation(id)?.platform ?? "another app";
+      return store.recentMessages(id, config.crossChatMessages, Number.MAX_SAFE_INTEGER, now - config.crossChatWindowMs).map((m) => ({ ...m, platform }));
+    })
+    .sort((a, b) => a.at - b.at)
+    .slice(-config.crossChatMessages);
+}

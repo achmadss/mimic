@@ -105,7 +105,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, openThreadThreshold: 0.55 }), messageCount: 2 };
   const msgs = buildPrompt({
     profile: rick, decision, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: "portal gun",
-    recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], styles: [{ lowercase: false, typo: false, correct: false }, { lowercase: false, typo: false, correct: false }],
+    recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], elsewhere: [], styles: [{ lowercase: false, typo: false, correct: false }, { lowercase: false, typo: false, correct: false }],
   });
   assert.equal(msgs[0].role, "system");
   assert.match(msgs[0].content, /Rick Sanchez/);
@@ -117,7 +117,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   // the per-message budget comes from the character's own ceiling, scaled by Jev's length class
   const short = buildPrompt({
     profile: rick, decision: { ...decision, messageCount: 3, messageLength: "terse" }, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null,
-    recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], styles: [],
+    recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], elsewhere: [], styles: [],
   });
   const budget = Math.max(20, Math.round(rick.speechStyle.maxCharsPerMessage * 0.12)); // 20-char floor
   assert.match(short[0].content, new RegExp(`under about ${budget} characters`));
@@ -125,11 +125,11 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   assert.match(short[0].content, /exactly 3 message/);
   const long = buildPrompt({
     profile: rick, decision: { ...decision, messageCount: 1, messageLength: "long" }, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null,
-    recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], styles: [],
+    recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], elsewhere: [], styles: [],
   });
   assert.match(long[0].content, new RegExp(`under about ${rick.speechStyle.maxCharsPerMessage} characters`));
 
-  const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], styles: [] });
+  const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], elsewhere: [], styles: [] });
   assert.equal(fu.length, 1);
   assert.match(fu[0].content, /on your own/);
 });
@@ -137,7 +137,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
 const PROMPT_CTX = () => {
   const rick = loadProfiles("characters").get("rick")!;
   const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, openThreadThreshold: 0.55 }), messageCount: 1 };
-  return { rick, base: { profile: rick, decision, trigger: "user_turn" as const, activity: "idle" as const, localTime: "Thu 04:00", topic: null, recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], styles: [] } };
+  return { rick, base: { profile: rick, decision, trigger: "user_turn" as const, activity: "idle" as const, localTime: "Thu 04:00", topic: null, recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], elsewhere: [], styles: [] } };
 };
 
 test("prompt: the authored character and the current mood reach the model", () => {

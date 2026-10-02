@@ -267,3 +267,36 @@ test("a process leaves alone conversations on platforms it is not running", asyn
   assert.equal(t.jev.calls.length, 0, "the Telegram follow-up was not fired");
   assert.ok(t.store.getAction(`followup:${tg}`), "and is still there for the Telegram process");
 });
+
+test("a platform that starts after boot adopts its timers; one that stops releases them", async () => {
+  const { InteractionManager } = await import("../src/im/manager.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { loadProfiles } = await import("../src/character/profile.ts");
+  const t = setupIM();
+  const tg = t.store.getOrCreateConversation("rick", "telegram", "42").conversationId;
+  t.store.putAction({ id: `followup:${tg}`, conversationId: tg, kind: "delayed_followup", dueAt: t.clock.now() + 60_000 });
+  const live = new Set<string>();
+  const im = new InteractionManager(
+    { store: t.store, clock: t.clock, jev: t.jev, llm: t.llm, profiles: loadProfiles("characters"), config: DEFAULT_CONFIG, log: () => {} },
+    (_c, platform) => {
+      if (!live.has(platform)) throw new Error("offline");
+      return t.adapter;
+    },
+  );
+  await im.recover();
+
+  live.add("telegram"); // a token was added in the dashboard
+  await im.adopt("rick", "telegram");
+  live.delete("telegram"); // and removed again before the follow-up came due
+  im.release("rick", "telegram");
+  t.clock.advance(LONG);
+  await im.drain();
+  assert.equal(t.jev.calls.length, 0, "released: the timer does not fire into a missing adapter");
+  assert.ok(t.store.getAction(`followup:${tg}`), "the row is kept for whoever adopts it next");
+
+  live.add("telegram");
+  await im.adopt("rick", "telegram");
+  t.clock.advance(1);
+  await im.drain();
+  assert.equal(t.jev.calls.length, 1, "adopted: the overdue follow-up fires");
+});

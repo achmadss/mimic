@@ -33,6 +33,8 @@ export class TelegramAdapter implements DeliveryAdapter {
     });
     this.bot.catch((err) => console.error("[telegram] handler error", err));
     if (this.opts.poll === false) return;
+    // getMe: a rejected token fails here, where the caller can report it, not later inside polling
+    await this.bot.init();
     // the menu next to the text box; best-effort, the commands work without it
     await this.bot.api
       .setMyCommands(Object.entries(COMMANDS).map(([command, description]) => ({ command, description })), { scope: { type: "all_private_chats" } })

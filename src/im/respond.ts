@@ -7,7 +7,7 @@ import type { Clock } from "../clock.ts";
 import type { Config } from "../config.ts";
 import { acquaintanceFrom, clamp, contextWindow, describeAcquaintance, nextOpenThreads, openThreads, selectExamples } from "../context/context.ts";
 import type { JevAnswers, JevClient } from "../jev/client.ts";
-import { recall, summarizeIfDue } from "../context/memory.ts";
+import { elsewhere, recall, summarizeIfDue } from "../context/memory.ts";
 import { decide } from "../jev/decide.ts";
 import { buildQuestions } from "../jev/questions.ts";
 import { buildJevState } from "../jev/state.ts";
@@ -136,6 +136,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
     : [];
   const asking = decision.topicAction === "ask" ? open : [];
   const remembered = recall(store, conversationId, `${texts.join(" ")} ${conv.topic ?? ""}`, config);
+  const otherChats = elsewhere(store, conversationId, now, config);
   // What this turn was actually built from (doc 04 §2: recorded for explainability). The prompt is
   // not stored, but its inputs are, and they are what explain a surprising reply.
   store.appendEvent(conversationId, now, "CONTEXT_RETRIEVED", {
@@ -145,6 +146,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
     openThreads: open.map((t) => t.id),
     asking: asking.map((t) => t.id),
     memories: [...remembered.facts, ...remembered.summaries].map((m) => m.id),
+    elsewhere: otherChats.length,
   });
 
   let output: LLMOutput;
@@ -156,6 +158,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
         them: describeAcquaintance(them, now),
         facts: remembered.facts.map((m) => m.text),
         earlier: remembered.summaries.map((m) => m.text),
+        elsewhere: otherChats,
       }),
       { sessionId: sessionIdFor(conversationId) },
     );

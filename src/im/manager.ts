@@ -76,17 +76,33 @@ export class InteractionManager {
     }
   }
 
-  /** Boot: settle messages stuck in `sending`, drop sends overdue past catch-up, arm timers. */
-  async recover() {
+  /** A platform came online for a character after boot: recover and arm just its conversations. */
+  adopt(characterId: string, platform: Platform) {
+    const mine = (id: string) => id.startsWith(`${characterId}:${platform}:`) && this.serves(id);
+    return this.recover(mine);
+  }
+
+  /** A platform is going offline for a character: its timers stop here, its rows stay for whoever adopts it next. */
+  release(characterId: string, platform: Platform) {
+    const prefix = `${characterId}:${platform}:`;
+    this.scheduler.disarmWhere((row) => row.conversationId.startsWith(prefix));
+    for (const id of [...this.typing.keys()]) if (id.startsWith(prefix)) this.stopTyping(id);
+  }
+
+  /**
+   * Boot (every conversation this process serves) or adopt (one platform's): settle messages stuck in
+   * `sending`, drop sends overdue past catch-up, arm timers.
+   */
+  async recover(within: (conversationId: string) => boolean = (id) => this.serves(id)) {
     const { store, clock, config } = this.deps;
     const now = clock.now();
     // through the queue, not beside it: a resend must not interleave with messages already arriving
-    for (const msg of store.botMessagesWithStatus("sending").filter((m) => this.serves(m.conversationId))) {
+    for (const msg of store.botMessagesWithStatus("sending").filter((m) => within(m.conversationId))) {
       await this.enqueue(msg.conversationId, () => this.settleSending(msg));
     }
     store.tx(() => {
       // held sends whose turn's handler died: their action row is gone, so nothing would ever re-arm them
-      for (const msg of store.scheduledBotMessagesWithoutAction().filter((m) => this.serves(m.conversationId))) {
+      for (const msg of store.scheduledBotMessagesWithoutAction().filter((m) => within(m.conversationId))) {
         const conv = store.getConversation(msg.conversationId);
         const reason = !conv || msg.conversationVersion !== conv.version ? "stale_version" : msg.dueAt < now - config.catchUpMs ? "overdue_at_restart" : null;
         if (reason) {
@@ -99,7 +115,7 @@ export class InteractionManager {
     });
     store.tx(() => {
       for (const row of store.allActions()) {
-        if (row.kind !== "send_message" || row.dueAt >= now - config.catchUpMs || !this.serves(row.conversationId)) continue;
+        if (row.kind !== "send_message" || row.dueAt >= now - config.catchUpMs || !within(row.conversationId)) continue;
         store.deleteAction(row.id);
         const msg = store.getBotMessage(row.id);
         if (!msg) continue;
@@ -107,7 +123,7 @@ export class InteractionManager {
         store.appendEvent(row.conversationId, now, "OUTGOING_MESSAGE_CANCELLED", { messageId: row.id, reason: "overdue_at_restart" });
       }
     });
-    this.scheduler.armAll((row) => this.serves(row.conversationId));
+    this.scheduler.armAll((row) => within(row.conversationId));
   }
 
   /**

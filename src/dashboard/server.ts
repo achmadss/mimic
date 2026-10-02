@@ -7,6 +7,8 @@ import { ProfileSchema, type CharacterProfile } from "../character/profile.ts";
 import type { RoutineEngine } from "../character/routine-engine.ts";
 import type { Clock } from "../clock.ts";
 import { applyConfig, ConfigOverridesSchema, DEFAULT_CONFIG, writeConfigFile, type Config } from "../config.ts";
+import { BOT_PLATFORMS, type AdapterRegistry, type BotPlatform } from "../delivery/registry.ts";
+import { setEnvVar } from "../envfile.ts";
 import type { InteractionManager } from "../im/manager.ts";
 import { openThreads } from "../context/context.ts";
 import type { Store } from "../store.ts";
@@ -16,8 +18,7 @@ import { ACTIVITIES, PACES } from "../types.ts";
  * The dashboard: one page and a JSON API, inside the bot process so that an edit is live on the
  * next turn — profiles and config are shared objects the reply path reads every time.
  *
- * What still needs a restart is said so in the response: bot tokens and platform bindings are read
- * once, when the adapters start.
+ * Bot tokens and platform bindings are live too: a change re-syncs that character's adapters.
  */
 export interface DashboardDeps {
   store: Store;
@@ -28,8 +29,9 @@ export interface DashboardDeps {
   config: Config;
   configPath: string;
   charactersDir: string;
-  /** `${characterId}:${platform}` for every adapter that started at boot. */
-  running: Set<string>;
+  adapters: AdapterRegistry;
+  /** The dotenv file bot tokens are written to. */
+  envPath: string;
   env: NodeJS.ProcessEnv;
 }
 
@@ -67,12 +69,24 @@ function validProfile(body: unknown): CharacterProfile {
   return parsed.data;
 }
 
-function platformsOf(p: CharacterProfile, d: DashboardDeps) {
-  return Object.fromEntries(
-    (["telegram", "discord"] as const)
-      .filter((k) => p.platforms[k])
-      .map((k) => [k, { env: p.platforms[k]!.botTokenEnv, set: Boolean(d.env[p.platforms[k]!.botTokenEnv]), running: d.running.has(`${p.characterId}:${k}`) }]),
-  );
+const platformsOf = (p: CharacterProfile, d: DashboardDeps) => d.adapters.status(p);
+
+/** Two characters on one token would overwrite each other's conversations: refuse it at the edge. */
+function assertOwnBindings(d: DashboardDeps, p: CharacterProfile) {
+  for (const other of d.profiles.values()) {
+    if (other.characterId === p.characterId) continue;
+    for (const k of BOT_PLATFORMS) {
+      const mine = p.platforms[k]?.botTokenEnv;
+      if (mine && BOT_PLATFORMS.some((j) => other.platforms[j]?.botTokenEnv === mine)) {
+        throw new HttpError(409, `${mine} is already ${other.name}'s token`);
+      }
+    }
+  }
+}
+
+function saveProfile(d: DashboardDeps, p: CharacterProfile) {
+  writeFileSync(profileFile(d.charactersDir, p.characterId), `${JSON.stringify(p, null, 2)}\n`);
+  d.profiles.set(p.characterId, p);
 }
 
 const ALLOWED_COMMANDS = new Set(["forget", "reset"]);
@@ -111,14 +125,44 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
   }
 
   if (method === "PUT" && (m = path.match(/^\/api\/characters\/([a-z0-9_]+)$/))) {
-    const before = d.profiles.get(m[1]);
-    if (!before) throw new HttpError(404, "no such character");
+    if (!d.profiles.has(m[1])) throw new HttpError(404, "no such character");
     const p = validProfile(body);
     if (p.characterId !== m[1]) throw new HttpError(400, "characterId cannot be changed: it is part of every conversation id");
-    writeFileSync(profileFile(d.charactersDir, p.characterId), `${JSON.stringify(p, null, 2)}\n`);
-    d.profiles.set(p.characterId, p);
+    assertOwnBindings(d, p);
+    saveProfile(d, p);
     d.routine.reload(p.characterId);
-    return { ok: true, restartNeeded: JSON.stringify(before.platforms) !== JSON.stringify(p.platforms) };
+    await d.adapters.sync(p.characterId, p);
+    return { ok: true, platforms: platformsOf(p, d) };
+  }
+
+  if (method === "PUT" && (m = path.match(/^\/api\/characters\/([a-z0-9_]+)\/platforms\/(telegram|discord)$/))) {
+    let p = d.profiles.get(m[1]);
+    if (!p) throw new HttpError(404, "no such character");
+    const platform = m[2] as BotPlatform;
+    const token = (body as { token?: unknown })?.token;
+    if (token !== null && (typeof token !== "string" || !token.trim())) throw new HttpError(400, "token must be a string, or null to remove it");
+    // a token with nowhere to go gets the conventional env var name, and the binding is saved
+    if (!p.platforms[platform]) {
+      p = { ...p, platforms: { ...p.platforms, [platform]: { botTokenEnv: `${p.characterId.toUpperCase()}_${platform.toUpperCase()}_TOKEN` } } };
+      assertOwnBindings(d, p);
+      saveProfile(d, p);
+    }
+    const envName = p.platforms[platform]!.botTokenEnv;
+    if (typeof token === "string") {
+      for (const other of d.profiles.values()) {
+        for (const k of BOT_PLATFORMS) {
+          const name = other.platforms[k]?.botTokenEnv;
+          if (name && name !== envName && d.env[name] === token.trim()) throw new HttpError(409, `that token is already ${other.name}'s ${k} bot`);
+        }
+      }
+    }
+    try {
+      setEnvVar(d.envPath, d.env, envName, typeof token === "string" ? token.trim() : null);
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message);
+    }
+    await d.adapters.sync(p.characterId, p);
+    return { ok: true, platform: platformsOf(p, d)[platform] };
   }
 
   if (method === "POST" && path === "/api/characters") {
@@ -132,10 +176,10 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
       characterId: id,
       platforms: { telegram: { botTokenEnv: `${upper}_TELEGRAM_TOKEN` }, discord: { botTokenEnv: `${upper}_DISCORD_TOKEN` } },
     });
-    writeFileSync(join(d.charactersDir, `${id}.json`), `${JSON.stringify(p, null, 2)}\n`);
-    d.profiles.set(id, p);
+    saveProfile(d, p);
     d.routine.reload(id);
-    return { ok: true, restartNeeded: true };
+    await d.adapters.sync(id, p);
+    return { ok: true };
   }
 
   if (method === "GET" && path === "/api/config") return { config: d.config, defaults: DEFAULT_CONFIG };
@@ -169,8 +213,13 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
     const rest = m[2] ?? "";
 
     if (method === "GET" && rest === "") {
+      const linked = new Set(d.store.linkedConversationIds(id));
+      const brief = (c: { conversationId: string; platform: string; chatId: string; messageCount?: number }) => ({ id: c.conversationId, platform: c.platform, chatId: c.chatId, messages: c.messageCount });
+      const others = d.store.listConversations().filter((c) => c.characterId === conv.characterId && c.conversationId !== id);
       return {
         conversation: conv,
+        linked: others.filter((c) => linked.has(c.conversationId)).map(brief),
+        linkable: others.filter((c) => !linked.has(c.conversationId)).map(brief),
         openThreads: openThreads(conv.unresolved, now, d.config),
         messages: d.store.recentMessages(id, 100),
         pending: d.store.pendingBotMessages(id),
@@ -178,6 +227,22 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
         summaries: d.store.memories(id, "summary", 50),
         events: d.store.recentEvents(id, 100),
       };
+    }
+    if (method === "POST" && rest === "/link") {
+      const other = (body as { with?: unknown })?.with;
+      if (typeof other !== "string" || other === id) throw new HttpError(400, "say which chat to link with");
+      try {
+        d.store.linkConversations(id, other);
+      } catch (e) {
+        throw new HttpError(400, (e as Error).message);
+      }
+      d.store.appendEvent(id, now, "CONVERSATIONS_LINKED", { with: other });
+      return { ok: true, linked: d.store.linkedConversationIds(id) };
+    }
+    if (method === "POST" && rest === "/unlink") {
+      d.store.unlinkConversation(id);
+      d.store.appendEvent(id, now, "CONVERSATIONS_UNLINKED", {});
+      return { ok: true };
     }
     if (method === "POST" && (m = rest.match(/^\/(\w+)$/)) && ALLOWED_COMMANDS.has(m[1])) {
       return { ok: true, message: await d.im.command(id, m[1] as "forget" | "reset") };

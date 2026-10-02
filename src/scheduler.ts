@@ -28,6 +28,11 @@ export class Scheduler {
     for (const row of this.store.allActions()) if (owns(row)) this.arm(row);
   }
 
+  /** Stop the timers of matching rows without deleting them: another process, or a later adopt, re-arms them. */
+  disarmWhere(match: (row: ActionRow) => boolean) {
+    for (const row of this.store.allActions()) if (match(row)) this.disarm(row.id);
+  }
+
   private arm(row: ActionRow) {
     this.disarm(row.id);
     const handle = this.clock.setTimeout(() => {

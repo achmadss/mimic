@@ -39,7 +39,7 @@
   .chip.ok { color: var(--accent); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
   .muted { color: var(--muted); }
   .stat { font-size: 26px; font-weight: 650; }
-  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  button { white-space: nowrap; font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
   button:hover { border-color: var(--muted); }
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   button.danger { color: var(--bad); }
@@ -216,6 +216,8 @@ function showIssues(form, box, e) {
 /* ---------- pages ---------- */
 
 let enums = { activity: [], basePace: [] };
+const platformTone = (s) => (s.running ? "ok" : s.error ? "bad" : s.tokenSet ? "warn" : "");
+const platformWord = (s) => (s.running ? "running" : s.error ? "error" : s.tokenSet ? "stopped" : "no token");
 
 async function overview() {
   const o = await api("GET", "/api/overview");
@@ -229,7 +231,7 @@ async function overview() {
         <div>${esc(c.activity)} <span class="muted">for ${ago(c.activitySince).replace(" ago", "")}</span></div>
         <div class="muted">${esc(c.localTime)} their time${c.mood !== "neutral" ? ` · feeling ${esc(c.mood)}` : ""}</div>
         <div class="row" style="margin-top:10px">${Object.entries(c.platforms).map(([p, s]) =>
-          `<span class="chip ${s.running ? "ok" : s.set ? "warn" : "bad"}" title="${esc(s.env)}">${esc(p)}: ${s.running ? "running" : s.set ? "restart to start" : `set ${esc(s.env)}`}</span>`).join("") || `<span class="chip">CLI only</span>`}</div>
+          `<span class="chip ${platformTone(s)}" title="${esc(s.error ?? s.env)}">${esc(p)}: ${esc(platformWord(s))}</span>`).join("") || `<span class="chip">no bots</span>`}</div>
         <div class="muted" style="margin-top:8px"><a href="#/conversations?c=${esc(c.id)}">${c.conversations} conversation(s)</a></div>
       </div>`).join("")}
     </div></div>`));
@@ -249,11 +251,42 @@ async function characters() {
     if (!id) return;
     try {
       await api("POST", "/api/characters", { characterId: id });
-      toast("Created from the template. Restart to put it on Telegram/Discord.");
+      toast("Created from the template. Add a token to put it live.");
       location.hash = `#/characters/${id}`;
     } catch (e) { toast(e.message); }
   };
   $main.replaceChildren(page);
+}
+
+/** One platform's binding: the env var name (part of the profile), and the token (in .env). */
+function tokenPanel(id, k, state, platforms) {
+  const s = platforms[k];
+  const box = h(`<div style="border-top:1px solid var(--line);padding-top:8px;margin-top:8px">
+    <div class="row" style="justify-content:space-between"><b>${k}</b>
+      <span class="chip ${s ? platformTone(s) : ""}">${s ? esc(platformWord(s)) : "off"}</span></div>
+    ${s?.error ? `<div class="errors" style="font-size:13px">${esc(s.error)}</div>` : ""}
+    <label class="field" data-path="platforms.${k}"><span>token env var<small>empty = off</small></span>
+      <input type="text" class="env" placeholder="${esc(id.toUpperCase())}_${k.toUpperCase()}_TOKEN" value="${esc(state.platforms[k]?.botTokenEnv ?? "")}"></label>
+    <label class="field"><span>token<small>${s?.tokenSet ? `set, ends ${esc(s.tokenHint)}` : "not set"}</small></span>
+      <div class="row" style="flex-wrap:nowrap"><input type="password" class="tok" autocomplete="off" placeholder="${s?.tokenSet ? "paste a new token to replace it" : "paste the bot token"}">
+      <button type="button" class="primary set">Save token</button>${s?.tokenSet ? `<button type="button" class="danger clear">Remove</button>` : ""}</div></label>
+  </div>`);
+  const env = box.querySelector(".env");
+  env.oninput = () => { if (env.value.trim()) state.platforms[k] = { botTokenEnv: env.value.trim() }; else delete state.platforms[k]; };
+  const put = async (token) => {
+    try {
+      const r = await api("PUT", `/api/characters/${encodeURIComponent(id)}/platforms/${k}`, { token });
+      // the server may have created the binding; keep the form in step without losing other edits
+      state.platforms[k] = { botTokenEnv: r.platform.env };
+      platforms[k] = r.platform;
+      box.replaceWith(tokenPanel(id, k, state, platforms));
+      toast(r.platform.running ? `${k} is live.` : r.platform.error ? `Saved, but ${k} did not start: ${r.platform.error}` : token ? "Saved." : "Token removed; the bot is stopped.");
+    } catch (e) { toast(e.message); }
+  };
+  box.querySelector(".set").onclick = () => { const t = box.querySelector(".tok").value.trim(); if (t) put(t); else toast("Paste a token first."); };
+  const clear = box.querySelector(".clear");
+  if (clear) clear.onclick = () => confirm(`Remove the ${k} token? The bot goes offline.`) && put(null);
+  return box;
 }
 
 async function character(id) {
@@ -261,7 +294,7 @@ async function character(id) {
   const { profile, platforms } = await api("GET", `/api/characters/${encodeURIComponent(id)}`);
   const state = structuredClone(profile);
   const page = h(`<div><h1>${esc(profile.name)}</h1>
-    <p class="sub">characters/ · <code>${esc(id)}</code> · changes apply on the next message; platform changes need a restart</p>
+    <p class="sub">characters/ · <code>${esc(id)}</code> · changes apply on the next message</p>
     <div id="form"></div>
     <div class="bar"><button class="primary" id="save">Save</button><button id="revert">Revert</button><span class="errors" id="err"></span></div></div>`);
   const formBox = page.querySelector("#form");
@@ -272,15 +305,9 @@ async function character(id) {
     custom: (p, v) => {
       if (p.join(".") === "characterId") return h(`<label class="field"><span>characterId</span><input value="${esc(v)}" disabled></label>`);
       if (p.join(".") !== "platforms") return null;
-      const fs = h(`<fieldset><legend>platforms</legend><p class="muted" style="margin:0 0 6px">The name of the env var holding each bot token. Leave empty to not use that platform.</p></fieldset>`);
-      for (const k of ["telegram", "discord"]) {
-        const s = platforms[k];
-        const el = h(`<input type="text" placeholder="e.g. ${esc(id.toUpperCase())}_${k.toUpperCase()}_TOKEN" value="${esc(v[k]?.botTokenEnv ?? "")}">`);
-        el.oninput = () => { if (el.value.trim()) state.platforms[k] = { botTokenEnv: el.value.trim() }; else delete state.platforms[k]; };
-        const lab = h(`<label class="field" data-path="platforms.${k}"><span>${k}<small>${s ? (s.running ? "running" : s.set ? "token set, restart to start" : "token env var not set") : ""}</small></span></label>`);
-        lab.append(el); fs.append(lab);
-      }
-      return fs;
+      const fs = h(`<fieldset><legend>platforms</legend><p class="muted" style="margin:0 0 6px">Give a character a token on both to have them on both. Changes go live straight away; tokens are stored in <code>.env</code> and never shown.</p></fieldset>`);
+      for (const k of ["telegram", "discord"]) fs.append(tokenPanel(id, k, state, platforms));
+      return fs;      return fs;
     },
   };
   const render = () => formBox.replaceChildren(buildForm(state, opts, render));
@@ -290,7 +317,11 @@ async function character(id) {
     const err = page.querySelector("#err"); err.textContent = "";
     try {
       const r = await api("PUT", `/api/characters/${encodeURIComponent(id)}`, state);
-      toast(r.restartNeeded ? "Saved. Restart to apply the platform change." : "Saved. Live on the next message.");
+      const down = Object.entries(r.platforms).filter(([, p]) => p.error);
+      toast(down.length ? `Saved, but ${down.map(([k, p]) => `${k}: ${p.error}`).join("; ")}` : "Saved. Live on the next message.");
+      for (const k of Object.keys(platforms)) delete platforms[k];
+      Object.assign(platforms, r.platforms);
+      render();
     } catch (e) { showIssues(formBox, err, e); }
   };
   $main.replaceChildren(page);
@@ -317,6 +348,8 @@ const CONFIG_NOTES = {
   summaryMaxChunk: "messages per summary",
   maxFacts: "facts per reply",
   maxSummaries: "notes per reply",
+  crossChatMessages: "latest messages from linked chats on other platforms, per reply",
+  crossChatWindowMs: "ms: older linked-chat messages are left to the notes",
 };
 
 async function settings() {
@@ -367,6 +400,13 @@ async function conversation(id) {
     <div class="chat" id="chat">${c.messages.map((m) => `<div class="msg ${m.role}">${esc(m.text)}<time>${when(m.at)}</time></div>`).join("") || `<span class="muted">No messages.</span>`}
       ${c.pending.map((m) => `<div class="msg bot" style="opacity:.55">${esc(m.text)}<time>queued, due ${when(m.dueAt)}</time></div>`).join("")}</div>
 
+    <h2>Same person elsewhere</h2>
+    <p class="muted" style="margin:-4px 0 8px">Link this chat to the same person's chat on another platform, and ${esc(conv.characterId)} shares what they remember across both.</p>
+    ${c.linked.length ? `<ul class="items">${c.linked.map((o) => `<li><a href="#/conversations/${encodeURIComponent(o.id)}">${esc(o.platform)} · ${esc(o.chatId)}</a><span class="muted">${o.messages} messages</span></li>`).join("")}</ul>
+      <div class="row" style="margin-top:8px"><button id="unlink">Unlink this chat</button></div>` : ""}
+    ${c.linkable.length ? `<div class="row" style="margin-top:8px"><select id="linkWith" style="width:auto">${c.linkable.map((o) => `<option value="${esc(o.id)}">${esc(o.platform)} · ${esc(o.chatId)} (${o.messages} messages)</option>`).join("")}</select><button class="primary" id="link">Link</button></div>`
+      : c.linked.length ? "" : `<p class="muted">No other chats with ${esc(conv.characterId)} yet. Message them on the other platform first.</p>`}
+
     <h2>Meaning to ask about</h2>
     ${c.openThreads.length ? `<ul class="items">${c.openThreads.map((t) => item(t.summary, "thread", t.id, ` <span class="muted">· ${ago(t.raisedAt)}</span>`)).join("")}</ul>` : `<p class="muted">Nothing open.</p>`}
 
@@ -392,7 +432,18 @@ async function conversation(id) {
     try { toast((await api("POST", `/api/conversations/${encodeURIComponent(id)}/${cmd}`, {})).message); conversation(id); }
     catch (e) { toast(e.message); }
   };
-  page.querySelector("#forget").onclick = run("forget", "Delete every fact, note and open thread for this chat? The messages stay.");
+  const link = page.querySelector("#link");
+  if (link) link.onclick = async () => {
+    try { await api("POST", `/api/conversations/${encodeURIComponent(id)}/link`, { with: page.querySelector("#linkWith").value }); toast("Linked. They now share memory."); conversation(id); }
+    catch (e) { toast(e.message); }
+  };
+  const unlink = page.querySelector("#unlink");
+  if (unlink) unlink.onclick = async () => {
+    if (!confirm("Unlink this chat? What was learned here stays with this chat.")) return;
+    try { await api("POST", `/api/conversations/${encodeURIComponent(id)}/unlink`, {}); conversation(id); }
+    catch (e) { toast(e.message); }
+  };
+  page.querySelector("#forget").onclick = run("forget", "Delete every fact and note about this person (in every linked chat), and this chat's open threads? The messages stay.");
   page.querySelector("#reset").onclick = run("reset", "Reset this chat? Messages, memory and anything queued are deleted, and the character starts over.");
   $main.replaceChildren(page);
 }

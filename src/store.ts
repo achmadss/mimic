@@ -1,7 +1,15 @@
+import { randomUUID } from "node:crypto";
 import type { DB } from "./db.ts";
 import type { ActionRow, BotMessage, CharacterState, ConversationState, Emotion, Example, MemoryItem, MessageStatus, Platform, TurnBuffer, UnresolvedItem } from "./types.ts";
 
 type Row = Record<string, any>;
+
+/**
+ * Every conversation that is the same person as `?`: chats linked across platforms share a
+ * `person_id`, and an unlinked chat is a person of its own (its own id).
+ */
+const SAME_PERSON = `SELECT id FROM conversations WHERE COALESCE(person_id, id) =
+  (SELECT COALESCE(person_id, id) FROM conversations WHERE id = ?)`;
 
 const toConversation = (r: Row): ConversationState => ({
   conversationId: r.id,
@@ -91,8 +99,37 @@ export class Store {
   }
 
   /** Returns how many went. */
+  /** Everything known about the person, from every chat linked to this one. Returns how many went. */
   forgetMemories(conversationId: string): number {
-    return this.db.prepare("DELETE FROM memories WHERE conversation_id = ?").run(conversationId).changes;
+    return this.db.prepare(`DELETE FROM memories WHERE conversation_id IN (${SAME_PERSON})`).run(conversationId).changes;
+  }
+
+  /** This chat and every chat linked to it, this one first. */
+  linkedConversationIds(conversationId: string): string[] {
+    const ids = (this.db.prepare(SAME_PERSON).all(conversationId) as Row[]).map((r) => r.id as string);
+    return [conversationId, ...ids.filter((id) => id !== conversationId)];
+  }
+
+  /**
+   * Same person, two chats (doc 05 §1 long-term layer, across platforms). Nothing on a platform says
+   * a Telegram user and a Discord user are one human, so this is an explicit act. Only within one
+   * character: what Rick knows about you is Rick's.
+   */
+  linkConversations(a: string, b: string) {
+    const [ca, cb] = [this.getConversation(a), this.getConversation(b)];
+    if (!ca || !cb) throw new Error("no such conversation");
+    if (ca.characterId !== cb.characterId) throw new Error("only chats with the same character can be linked");
+    this.tx(() => {
+      const person = (this.db.prepare("SELECT COALESCE(person_id, id) AS p FROM conversations WHERE id = ?").get(b) as Row).p;
+      for (const id of [...this.linkedConversationIds(a), ...this.linkedConversationIds(b)]) {
+        this.db.prepare("UPDATE conversations SET person_id = ? WHERE id = ?").run(person, id);
+      }
+    });
+  }
+
+  /** A fresh person id, not NULL: the rest of the group may be keyed by this chat's own id. */
+  unlinkConversation(id: string) {
+    this.db.prepare("UPDATE conversations SET person_id = ? WHERE id = ?").run(randomUUID(), id);
   }
 
   /**
@@ -101,7 +138,8 @@ export class Store {
    */
   resetConversation(conversationId: string) {
     this.db.prepare("DELETE FROM messages WHERE conversation_id = ?").run(conversationId);
-    this.forgetMemories(conversationId);
+    // this chat's own notes only: what was learned in a linked chat is still true there
+    this.db.prepare("DELETE FROM memories WHERE conversation_id = ?").run(conversationId);
     this.db.prepare("UPDATE conversations SET summarized_until = 0 WHERE id = ?").run(conversationId);
   }
 
@@ -228,19 +266,19 @@ export class Store {
     this.db.prepare("UPDATE conversations SET summarized_until = ? WHERE id = ?").run(summarizedUntil, conversationId);
   }
 
-  /** Newest first. */
+  /** Newest first, across every chat linked to this one. */
   memories(conversationId: string, kind: MemoryItem["kind"], limit: number): MemoryItem[] {
     return (
       this.db
-        .prepare("SELECT * FROM memories WHERE conversation_id = ? AND kind = ? ORDER BY to_at DESC, rowid DESC LIMIT ?")
+        .prepare(`SELECT * FROM memories WHERE conversation_id IN (${SAME_PERSON}) AND kind = ? ORDER BY to_at DESC, rowid DESC LIMIT ?`)
         .all(conversationId, kind, limit) as Row[]
     ).map((r) => ({ id: r.id, conversationId: r.conversation_id, kind: r.kind, text: r.text, fromAt: r.from_at, toAt: r.to_at }));
   }
 
-  /** When they first wrote, and how many messages they have sent in all. */
+  /** When they first wrote, and how many messages they have sent in all, on every linked chat. */
   userMessageStats(conversationId: string): { firstAt: number | null; count: number } {
     const r = this.db
-      .prepare("SELECT MIN(at) AS firstAt, COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'user'")
+      .prepare(`SELECT MIN(at) AS firstAt, COUNT(*) AS n FROM messages WHERE conversation_id IN (${SAME_PERSON}) AND role = 'user'`)
       .get(conversationId) as Row;
     return { firstAt: r.firstAt ?? null, count: r.n };
   }

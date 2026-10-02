@@ -6,14 +6,13 @@ import { applyConfig, DEFAULT_CONFIG, readConfigFile, type Config } from "./conf
 import { startDashboard } from "./dashboard/server.ts";
 import { openDb } from "./db.ts";
 import { CliAdapter } from "./delivery/cli.ts";
+import { AdapterRegistry, BOT_PLATFORMS } from "./delivery/registry.ts";
 import { DiscordAdapter } from "./delivery/discord.ts";
 import { TelegramAdapter } from "./delivery/telegram.ts";
-import type { DeliveryAdapter } from "./delivery/types.ts";
 import { InteractionManager } from "./im/manager.ts";
 import { httpJevClient } from "./jev/client.ts";
 import { openAICompatibleClient, type StructuredMode } from "./llm/client.ts";
 import { Store } from "./store.ts";
-import type { Activity, Platform } from "./types.ts";
 
 function env(name: string): string {
   const v = process.env[name];
@@ -42,77 +41,69 @@ const profiles = loadProfiles(CHARACTERS_DIR);
 const jev = httpJevClient({ apiKey: env("TYPESAFE_API_KEY") });
 const llm = openAICompatibleClient({ baseUrl: env("LLM_BASE_URL"), apiKey: env("LLM_API_KEY"), model: env("LLM_MODEL"), mode });
 
-const adapters = new Map<string, { characterId: string; adapter: DeliveryAdapter }>();
-const key = (characterId: string, platform: Platform) => `${characterId}:${platform}`;
-
-const cliIdx = process.argv.indexOf("--cli");
-if (cliIdx >= 0) {
-  const id = process.argv[cliIdx + 1] ?? "rick";
-  const p = profiles.get(id);
-  if (!p) throw new Error(`no character "${id}" (have: ${[...profiles.keys()].join(", ")})`);
-  adapters.set(key(id, "cli"), { characterId: id, adapter: new CliAdapter(p.name) });
-} else {
-  for (const p of profiles.values()) {
-    const tg = p.platforms.telegram && process.env[p.platforms.telegram.botTokenEnv];
-    if (tg) adapters.set(key(p.characterId, "telegram"), { characterId: p.characterId, adapter: new TelegramAdapter(tg) });
-    const dc = p.platforms.discord && process.env[p.platforms.discord.botTokenEnv];
-    if (dc) adapters.set(key(p.characterId, "discord"), { characterId: p.characterId, adapter: new DiscordAdapter(dc) });
-  }
-}
-if (adapters.size === 0) throw new Error("no adapters: set bot token env vars, or run `npm run cli -- rick`");
-
 const log = (m: string, e?: unknown) => console.error(`[mimic] ${m}`, e ?? "");
 
 // env, then whatever the dashboard saved on top: the last thing someone set is what runs
 const CONFIG_PATH = process.env.MIMIC_CONFIG ?? "mimic.config.json";
+const ENV_PATH = process.env.MIMIC_ENV_FILE ?? ".env";
 const config = configFromEnv();
 applyConfig(config, readConfigFile(CONFIG_PATH));
 
-const im = new InteractionManager(
-  { store, clock: realClock, jev, llm, profiles, config, log },
-  (characterId, platform) => {
-    const a = adapters.get(key(characterId, platform));
-    if (!a) throw new Error(`no adapter for ${characterId} on ${platform}`);
-    return a.adapter;
-  },
-);
+const cliIdx = process.argv.indexOf("--cli");
+const dashboardOn = process.env.DASHBOARD !== "off";
 
 /** Derived from activity, so it is mirror-only and never stored (doc 06 §2.27). */
-const setPresence = (characterId: string, activity: Activity) => {
-  for (const platform of ["telegram", "discord"] as const) {
-    adapters.get(key(characterId, platform))?.adapter.setPresence?.(PRESENCE[availability(activity)]);
-  }
-};
+const presenceOf = (characterId: string) => PRESENCE[availability(store.getCharacterState(characterId, realClock.now()).activity)];
+
+// `im` and the registry need each other: the registry delivers into the manager, the manager sends through the registry
+let im!: InteractionManager;
+const adapters = new AdapterRegistry({
+  // a CLI run is a local test: it must never put a character live on Telegram or Discord
+  allowed: cliIdx >= 0 ? [] : BOT_PLATFORMS,
+  env: process.env,
+  create: (platform, token) => (platform === "telegram" ? new TelegramAdapter(token) : new DiscordAdapter(token)),
+  receive: (characterId, platform, m) => im.receive(characterId, platform, m),
+  onStart: async (characterId, platform, adapter) => {
+    adapter.setPresence?.(presenceOf(characterId));
+    await im.adopt(characterId, platform);
+  },
+  onStop: (characterId, platform) => im.release(characterId, platform),
+  log,
+});
+
+im = new InteractionManager({ store, clock: realClock, jev, llm, profiles, config, log }, (characterId, platform) => adapters.get(characterId, platform));
 
 const routine = new RoutineEngine({
   store,
   clock: realClock,
   profiles,
-  onTransition: ({ characterId, to }) => {
-    setPresence(characterId, to);
+  onTransition: ({ characterId }) => {
+    adapters.each((c, _p, a) => c === characterId && a.setPresence?.(presenceOf(characterId)));
     im.onActivityChanged(characterId);
   },
   log,
 });
-
-for (const { characterId, adapter } of adapters.values()) {
-  await adapter.start((m) => im.receive(characterId, adapter.platform, m));
-  console.error(`[mimic] ${characterId} listening on ${adapter.platform}`);
-}
-await im.recover();
 routine.start();
-// start() reports only what moved; a character who did not change still needs their status set
-for (const characterId of profiles.keys()) setPresence(characterId, store.getCharacterState(characterId, realClock.now()).activity);
 
-if (process.env.DASHBOARD !== "off") {
+if (cliIdx >= 0) {
+  const id = process.argv[cliIdx + 1] ?? "rick";
+  const p = profiles.get(id);
+  if (!p) throw new Error(`no character "${id}" (have: ${[...profiles.keys()].join(", ")})`);
+  await adapters.add(id, new CliAdapter(p.name));
+}
+for (const p of profiles.values()) await adapters.sync(p.characterId, p);
+if (adapters.size === 0 && !dashboardOn) throw new Error("no adapters: set bot token env vars, or run `npm run cli -- rick`");
+if (adapters.size === 0) log("no bot is running yet: add a token in the dashboard");
+
+if (dashboardOn) {
   startDashboard(
-    { store, clock: realClock, im, routine, profiles, config, configPath: CONFIG_PATH, charactersDir: CHARACTERS_DIR, running: new Set(adapters.keys()), env: process.env },
+    { store, clock: realClock, im, routine, profiles, config, configPath: CONFIG_PATH, charactersDir: CHARACTERS_DIR, adapters, envPath: ENV_PATH, env: process.env },
     { host: process.env.DASHBOARD_HOST ?? "127.0.0.1", port: Number(process.env.DASHBOARD_PORT ?? 8787), password: process.env.DASHBOARD_PASSWORD || undefined },
   );
 }
 
 process.on("SIGINT", async () => {
   routine.stop();
-  for (const { adapter } of adapters.values()) await adapter.stop();
+  await adapters.stopAll();
   process.exit(0);
 });

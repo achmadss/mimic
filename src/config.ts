@@ -52,6 +52,13 @@ export interface Config {
   /** Long-term memory per turn (doc 05 §4 budget): facts about them, and summaries of earlier talk. */
   maxFacts: number;
   maxSummaries: number;
+  /**
+   * The latest messages from the same person's linked chats on other platforms. Summaries take a
+   * while to be written; this is what makes "like I said on Telegram" work ten minutes later.
+   */
+  crossChatMessages: number;
+  /** Older than this, a linked chat's messages are left to the summaries. */
+  crossChatWindowMs: number;
 }
 
 export const DEFAULT_CONFIG: Readonly<Config> = {
@@ -76,6 +83,8 @@ export const DEFAULT_CONFIG: Readonly<Config> = {
   summaryMaxChunk: 40,
   maxFacts: 12,
   maxSummaries: 2,
+  crossChatMessages: 8,
+  crossChatWindowMs: 3 * 24 * 3_600_000,
 };
 
 const num = z.number().finite().nonnegative();
