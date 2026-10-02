@@ -9,7 +9,8 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "start": "node --env-file-if-exists=.env --import tsx src/main.ts",
-    "cli": "node --env-file-if-exists=.env --import tsx src/main.ts --cli"
+    "cli": "node --env-file-if-exists=.env --import tsx src/main.ts --cli",
+    "ingest": "node --env-file-if-exists=.env --import tsx scripts/ingest-transcripts.ts"
   },
   "dependencies": {
     "@grammyjs/auto-retry": "^2.0.2",
