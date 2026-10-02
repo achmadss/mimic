@@ -64,7 +64,7 @@ const normalized = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, "").rep
  * Reach for a stemmer only if that shows up.
  */
 /** The user's own words, as a summary: one line, cut at a word boundary, keeping the start. */
-function clamp(text: string): string {
+export function clamp(text: string): string {
   const t = text.replace(/\s+/g, " ").trim();
   return t.length <= 80 ? t : `${t.slice(0, 80).replace(/\s+\S*$/, "")}...`;
 }

@@ -260,3 +260,17 @@ test("the window follows the topic once it is built up, and falls back when it i
   assert.match(history(fresh.llm), /new-0/);
   assert.match(history(fresh.llm), /old-0/, "a one-message-old topic must not blank out the conversation behind it");
 });
+
+test("a thread raised on a turn with no reply is kept in their own words, and a plain turn logs no change", async () => {
+  const { deps, store, jev, llm, convId, clock } = makeDeps();
+  jev.next = { respond_mode: choice("later"), opens_thread: noul(0.95) };
+  await respond(deps, convId, "user_turn", turn(["ugh the thesis thing is tomorrow morning"], clock.now()));
+  assert.equal(llm.calls.length, 0, "nothing was generated");
+  assert.deepEqual(store.getConversation(convId)!.unresolved.map((t) => t.summary), ["ugh the thesis thing is tomorrow morning"]);
+
+  const changes = () => store.events(convId).filter((e) => e.type === "UNRESOLVED_CHANGED").length;
+  const before = changes();
+  jev.next = { respond_mode: choice("now") };
+  await respond(deps, convId, "user_turn", turn(["lol ok"], clock.now()));
+  assert.equal(changes(), before, "the list did not change, so nothing is written");
+});

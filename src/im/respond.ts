@@ -5,7 +5,7 @@ import { applyStyle, humanize, styleFor, type MessageStyle } from "../character/
 import type { CharacterProfile } from "../character/profile.ts";
 import type { Clock } from "../clock.ts";
 import type { Config } from "../config.ts";
-import { acquaintanceFrom, contextWindow, describeAcquaintance, nextOpenThreads, openThreads, selectExamples } from "../context/context.ts";
+import { acquaintanceFrom, clamp, contextWindow, describeAcquaintance, nextOpenThreads, openThreads, selectExamples } from "../context/context.ts";
 import type { JevAnswers, JevClient } from "../jev/client.ts";
 import { recall, summarizeIfDue } from "../context/memory.ts";
 import { decide } from "../jev/decide.ts";
@@ -117,7 +117,15 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
 
   const kept = store.tx(() => applyDecision(d, conv, decision, pending, now));
   // An activity change re-decides what is queued. It never writes text, whether or not Jev exists.
-  if (trigger === "activity_changed" || decision.respondMode !== "now") return;
+  if (trigger === "activity_changed" || decision.respondMode !== "now") {
+    // Measured live: "the thesis thing is tomorrow morning" opened a thread on a turn Jev answered
+    // `later`, and with no generation there was no label, so it was lost. Their own words stand in.
+    if (decision.openThread && texts.length) {
+      const unresolved = nextOpenThreads(open, { asked: [], raised: clamp(texts.join(" ")) }, now, config);
+      store.tx(() => saveThreads(d, conversationId, conv.unresolved, unresolved, now));
+    }
+    return;
+  }
 
   // the seed for both the send jitter and the per-message style, fixed before the model runs
   const generationId = randomUUID();
@@ -206,6 +214,17 @@ function applyDecision(d: Deps, conv: ConversationState, decision: BehaviorDecis
   return kept;
 }
 
+/**
+ * Only on a real change. `nextOpenThreads` always returns a fresh array, so an identity check wrote
+ * a save and an empty `UNRESOLVED_CHANGED` on every turn.
+ */
+function saveThreads(d: Deps, conversationId: string, before: UnresolvedItem[], after: UnresolvedItem[], now: number) {
+  const ids = (l: UnresolvedItem[]) => l.map((t) => t.id).join(",");
+  if (ids(before) === ids(after)) return;
+  d.store.saveConversation({ ...d.store.getConversation(conversationId)!, unresolved: after });
+  d.store.appendEvent(conversationId, now, "UNRESOLVED_CHANGED", { open: after.map((t) => t.summary) });
+}
+
 function scheduleReply(
   d: Deps,
   conversationId: string,
@@ -247,11 +266,7 @@ function scheduleReply(
     store.saveConversation({ ...conv, topic: newTopic, topicStartedAt: now });
     store.appendEvent(conversationId, now, "TOPIC_CHANGED", { topic: newTopic });
   }
-  // one write for both fields: the topic switch above and the thread list are the same save
-  if (unresolved !== conv.unresolved) {
-    store.saveConversation({ ...(store.getConversation(conversationId) ?? conv), unresolved });
-    store.appendEvent(conversationId, now, "UNRESOLVED_CHANGED", { open: unresolved.map((t) => t.summary) });
-  }
+  saveThreads(d, conversationId, conv.unresolved, unresolved, now);
 
   const start = Math.max(now, ...kept.map((m) => m.dueAt));
   const offsets = replyOffsets({ pace: decision.pace, speedMultiplier: speed, texts, maxDelayMs: config.maxDelayMs, seed: generationId });
