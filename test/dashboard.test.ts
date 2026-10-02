@@ -66,8 +66,10 @@ test("request guard: loopback Host only, JSON writes only, password when set", (
   assert.equal(checkRequest({ method: "POST", headers: { host: "localhost:8787", "content-type": "text/plain" } }, o)?.status, 415, "a cross-site form post");
   const pw = { ...o, password: "s3cret" };
   assert.equal(checkRequest({ method: "GET", headers: { host: "x" } }, pw)?.status, 401);
-  const auth = `Basic ${Buffer.from("anyone:s3cret").toString("base64")}`;
-  assert.equal(checkRequest({ method: "GET", headers: { host: "x", authorization: auth } }, pw), null);
+  const basic = (s: string) => `Basic ${Buffer.from(s).toString("base64")}`;
+  assert.equal(checkRequest({ method: "GET", headers: { host: "x", authorization: basic("admin:s3cret") } }, pw), null, "user defaults to admin");
+  assert.equal(checkRequest({ method: "GET", headers: { host: "x", authorization: basic("anyone:s3cret") } }, pw)?.status, 401);
+  assert.equal(checkRequest({ method: "GET", headers: { host: "x", authorization: basic("rick:s3cret") } }, { ...pw, user: "rick" }), null);
   assert.throws(() => startDashboard({} as any, { host: "0.0.0.0", port: 0 }), /DASHBOARD_PASSWORD/);
 });
 

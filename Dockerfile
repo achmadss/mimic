@@ -11,7 +11,6 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV DB_PATH=data/mimic.db \
-    MIMIC_CONFIG=data/mimic.config.json \
-    DASHBOARD_HOST=0.0.0.0
+    MIMIC_CONFIG=data/mimic.config.json
 EXPOSE 8787
 CMD ["node", "--import", "tsx", "src/main.ts"]

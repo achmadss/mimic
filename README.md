@@ -6,7 +6,7 @@ Human-like chat engine. Design: `docs/README.md`. Plans: `docs/superpowers/plans
 
 ```bash
 npm install
-npm start              # then open http://127.0.0.1:8787 → Settings: base URL, API key, pick a model, Jev key
+npm start              # needs DASHBOARD_PASSWORD in .env; then open http://127.0.0.1:8787 → Settings: base URL, API key, pick a model, Jev key
 npm run cli -- rick    # or morty; chat in the terminal (uses the keys saved in the dashboard)
 npm test
 ```
@@ -19,13 +19,13 @@ mkdir -p data
 docker compose up -d
 ```
 
-Then open **http://127.0.0.1:8787** (any user name, your `DASHBOARD_PASSWORD`).
+Then open **http://127.0.0.1:8787** (user `admin`, or your `DASHBOARD_USER`; your `DASHBOARD_PASSWORD`).
 In **Settings**, save the LLM base URL and API key, pick a model from the list
 that appears, and save the Jev key; then paste each character's bot tokens on
 their page. All of that is stored in the database, not `.env`, which only holds
 app settings (see `.env.example`).
-- **`DASHBOARD_PASSWORD` is required** in the container: the dashboard listens
-  on all interfaces inside it, and refuses to do that without one. Compose
+- **`DASHBOARD_PASSWORD` is required**: the dashboard listens on all
+  interfaces, and refuses to do that without one. Compose
   publishes port 8787 on every interface, so other machines can reach it too.
 - **Your data is in `./data`** (database, with keys and tokens; saved settings) and `./characters`.
   Both are mounted, so rebuilding the image loses nothing.
@@ -99,8 +99,9 @@ While the bot runs, **http://127.0.0.1:8787** is a dashboard for all of it:
   minutes later. Nothing on Telegram or Discord says two accounts are one
   person, which is why this is a link you make rather than a guess.
 
-It listens on localhost only. To reach it from elsewhere, set `DASHBOARD_HOST`
-and `DASHBOARD_PASSWORD` together (it refuses to start without the password).
+It listens on every interface (`0.0.0.0`), so `DASHBOARD_PASSWORD` is required
+and the bot refuses to start without it. To keep it on this machine with no
+password, set `DASHBOARD_HOST=127.0.0.1`.
 `npm run cli` never starts a Telegram or Discord bot, even with tokens set.
 
 ### Commands

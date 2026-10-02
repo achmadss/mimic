@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
@@ -37,8 +38,10 @@ export interface DashboardDeps {
 export interface DashboardOptions {
   host: string;
   port: number;
-  /** Required unless bound to loopback. Checked as HTTP Basic auth, any user name. */
+  /** Required unless bound to loopback. Checked as HTTP Basic auth, with `user`. */
   password?: string;
+  /** The Basic auth user name. Default `admin`. */
+  user?: string;
 }
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -315,7 +318,7 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /**
- * Who may talk to it. Loopback-only by default; anything wider needs the password. Two cheap
+ * Who may talk to it. Off loopback it needs the user name and password. Two cheap
  * guards for the loopback case, where a page in the same browser is the attacker: the Host header
  * must be ours (DNS rebinding), and a write must be `application/json` (a cross-site form or
  * no-cors fetch cannot send that without a preflight, which this server never answers).
@@ -323,8 +326,9 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 export function checkRequest(req: Pick<IncomingMessage, "method" | "headers">, o: DashboardOptions): HttpError | null {
   if (o.password) {
     const [scheme, encoded] = (req.headers.authorization ?? "").split(" ");
-    const pass = scheme === "Basic" && encoded ? Buffer.from(encoded, "base64").toString().split(":").slice(1).join(":") : null;
-    if (pass !== o.password) return new HttpError(401, "password required");
+    const given = scheme === "Basic" && encoded ? Buffer.from(encoded, "base64").toString() : "";
+    const want = Buffer.from(`${o.user || "admin"}:${o.password}`);
+    if (given.length !== want.length || !timingSafeEqual(Buffer.from(given), want)) return new HttpError(401, "user name and password required");
   } else {
     const host = (req.headers.host ?? "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
     if (!LOOPBACK.has(host)) return new HttpError(403, "unexpected Host header");
@@ -336,7 +340,7 @@ export function checkRequest(req: Pick<IncomingMessage, "method" | "headers">, o
 }
 
 export function startDashboard(d: DashboardDeps, o: DashboardOptions): Server {
-  if (!LOOPBACK.has(o.host) && !o.password) throw new Error("DASHBOARD_PASSWORD is required when the dashboard is not bound to localhost");
+  if (!LOOPBACK.has(o.host) && !o.password) throw new Error("DASHBOARD_PASSWORD is required: the dashboard listens on every interface. Set one, or DASHBOARD_HOST=127.0.0.1 to keep it on this machine");
   const send = (res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...headers });
     res.end(JSON.stringify(body));

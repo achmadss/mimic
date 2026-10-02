@@ -108,7 +108,7 @@ for (const id of profiles.keys()) {
 if (dashboardOn) {
   startDashboard(
     { store, clock: realClock, im, routine, profiles, config, configPath: CONFIG_PATH, charactersDir: CHARACTERS_DIR, adapters },
-    { host: process.env.DASHBOARD_HOST ?? "127.0.0.1", port: Number(process.env.DASHBOARD_PORT ?? 8787), password: process.env.DASHBOARD_PASSWORD || undefined },
+    { host: process.env.DASHBOARD_HOST || "0.0.0.0", port: Number(process.env.DASHBOARD_PORT ?? 8787), password: process.env.DASHBOARD_PASSWORD || undefined, user: process.env.DASHBOARD_USER || "admin" },
   );
 }
 
