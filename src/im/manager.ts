@@ -143,11 +143,15 @@ export class InteractionManager {
         continue;
       }
       // Measured on the server: a `later` whose one follow-up landed while they slept was dropped for
-      // good. A person back from sleep or work answers what they left on read, so they get one more
-      // decision per change — unless they already replied, a follow-up is still armed, or a turn is
-      // still being typed (its own timer will answer it).
-      if (awake && conv.lastUserAt > conv.lastBotAt && !store.getAction(`followup:${id}`) && !store.getTurnBuffer(id)) {
-        void this.enqueue(id, () => respond(this.deps, id, "unanswered", null));
+      // good, and one written at 03:49 was armed for `next_day` (18 h). A person back from sleep or
+      // work answers what they left on read, so they get one more decision per change, and it
+      // replaces any follow-up still armed. Not when they already replied, or while a turn is still
+      // being typed (its own timer answers it).
+      if (awake && conv.lastUserAt > conv.lastBotAt && !store.getTurnBuffer(id)) {
+        void this.enqueue(id, () => {
+          this.scheduler.cancel(`followup:${id}`);
+          return respond(this.deps, id, "unanswered", null);
+        });
       }
     }
   }

@@ -226,6 +226,24 @@ test("messages left unanswered while asleep get answered on waking, once, and ne
   assert.equal(t.jev.calls.length, asked + 1);
 });
 
+test("waking up replaces a far-off follow-up: a 03:49 'next day' is answered in the morning, not 18 h later", async () => {
+  const t = setupIM();
+  t.store.saveCharacterState({ characterId: "rick", activity: "sleeping", activitySince: t.clock.now(), mood: null, moodChangedAt: null });
+  t.jev.next = { respond_mode: choice("later"), follow_up_after: choice("next_day") };
+  t.say("u up?");
+  await t.tick(2500);
+  assert.ok(t.store.getAction("followup:rick:cli:local"));
+
+  await t.tick(4 * 3_600_000); // morning
+  t.store.saveCharacterState({ characterId: "rick", activity: "idle", activitySince: t.clock.now(), mood: null, moodChangedAt: null });
+  t.jev.next = {};
+  t.llm.outputs = [{ messages: [{ text: "just woke up" }] }];
+  t.im.onActivityChanged("rick");
+  await t.tick(LONG);
+  assert.deepEqual(t.adapter.sent.map((s: any) => s.text), ["just woke up"]);
+  assert.equal(t.store.getAction("followup:rick:cli:local"), undefined, "the 18 h follow-up is gone, so no second message tomorrow");
+});
+
 test("activity change with nothing queued does not call Jev at all", async () => {
   const t = setupIM();
   t.store.getOrCreateConversation("rick", "cli", "local");
