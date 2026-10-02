@@ -13,8 +13,8 @@ Every feature from `DOC.md` §2. Layer codes: **Sys** = System, **Jev**,
 | 2.6 | Message timing | Yes | Jev (category) | Sys (clock) | Scheduler | Med | High | MVP |
 | 2.7 | Interruptions | Yes | Sys | Jev | Interaction Manager | Med | High | MVP |
 | 2.8 | Cancel vs continue pending | Yes | Jev | Sys | Scheduler + lifecycle | Med | High | MVP |
-| 2.9 | Topic switching / latching | Yes | Jev | LLM + Sys | Conversation State | Med | High | MVP (basic), Next (full) |
-| 2.10 | Conversation momentum | Yes | Sys (derived) | Jev | Timestamps | Low | Med | Next |
+| 2.9 | Topic switching / latching | Yes | Jev | LLM + Sys | Conversation State | Med | High | Built (set-aside topic becomes an open thread) |
+| 2.10 | Conversation momentum | Yes | Sys (derived) | Jev | Timestamps | Low | Med | Derived (`since` in Jev state), not stored |
 | 2.11 | Character activity | Yes | Sys | Jev | Character State engine | Med | High | MVP |
 | 2.12 | Device/local time routine | Yes | Sys | Jev | Routine Engine | Med | High | Built |
 | 2.13 | Availability | Yes | Sys (derived) | Jev | Derived from activity | Low | Med | MVP (derived) |
@@ -22,15 +22,15 @@ Every feature from `DOC.md` §2. Layer codes: **Sys** = System, **Jev**,
 | 2.15 | Attention capture | Yes | Jev | Sys | Per-conversation scalar | Low | Med | MVP |
 | 2.16 | Response speed | Yes | Sys (derived) | Jev (pace) | Derived + Scheduler | Low | High | MVP |
 | 2.17 | Not responding | Yes | Jev | Sys | Behavior decision | Low | High | MVP |
-| 2.18 | Delayed follow-up | Yes | Jev | Sys | Scheduler (reuse) | Low | Med | Next |
+| 2.18 | Delayed follow-up | Yes | Jev | Sys | Scheduler (reuse) | Low | Med | Built |
 | 2.19 | Daily routine | Yes | Sys | Jev | Routine Engine (own timers, not `actions`) | Med | High | Built |
 | 2.20 | Social state (energy etc.) | Yes | — | — | (drop) | Low | Low | Probably unnecessary |
 | 2.21 | Mood | Yes | Jev | LLM prompt | Expires on a 45 min TTL | Low | Med | Built (deliberately small) |
 | 2.22 | Character personality | Yes | Sys (profile) | LLM | Config | Low | High | MVP |
-| 2.23 | Example conversations | Yes | Sys (retrieval) | LLM | Context store | Med | Med | Built (emotion tag), Next (keyword) |
+| 2.23 | Example conversations | Yes | Sys (retrieval) | LLM | Context store | Med | Med | Built (emotion + secondary tags) |
 | 2.24 | Character quirks | Yes | LLM | Sys (seeded tendency) | Profile `quirks` + prompt | Low | Med | Built (repeats suppressed) |
-| 2.25 | User behavior modeling | Yes | Sys (derived) | Jev | Event Log projection | Med | Med | Experimental |
-| 2.26 | Relationship state | Yes | Sys (persist) | Jev + LLM | Memory/conversation state | Med | Med | Next |
+| 2.25 | User behavior modeling | Yes | Sys (derived) | Jev | `messages` projection | Low | Med | Built (derived per turn) |
+| 2.26 | Relationship state | Yes | Sys (derived) | Jev + LLM | `messages` + `memories` | Med | Med | Built (derived, plus facts) |
 | 2.30 | Unresolved threads | Yes | Jev | LLM + Sys | `ConversationState.unresolved` | Low | Med | Built (one JSON column) |
 | 2.27 | Typing/presence indicators | Yes | Sys | — | View of a scheduled message's `dueAt` | Low | Med | Built |
 | 2.28 | Stale response detection | Yes | Sys | — | conversationVersion | Low | High | MVP |

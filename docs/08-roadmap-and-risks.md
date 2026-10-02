@@ -72,6 +72,14 @@ adaptation.
 Semantic retrieval, vector search, full social-state model, multi-conversation
 memory graph.
 
+### Status (2026-10-02)
+
+Stages 0–5 are built. Stage 3's planner is the one deliberate gap: context is
+selected by topic scope, emotion tags and keyword overlap, with count budgets,
+and Jev does not yet vote on candidates (doc 05 §13). Stage 5 mood is the
+small version (doc 06 §2.21). Stage 6 is untouched, by design: nothing has yet
+measured keyword recall as insufficient.
+
 ## 3. Implementation order (§25.O)
 
 ```

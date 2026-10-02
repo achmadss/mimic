@@ -12,11 +12,12 @@ Conversation History ─► Context Store ─► Context Planner (Jev) ─► Co
                                         Interaction Manager ───────────┘
 ```
 
-**Status.** The *inputs* on the right are built; the planner on the left is not.
-What exists: the `examples` store (offline ingest, retrieved by `turn_emotion`),
-open threads on Conversation State, and a message window scoped to the current
-topic. What does not: `horizon`, `relevant_<id>`, `ContextItem[]` with budgets,
-and summaries. See §12 for why they are one piece of work and not four.
+**Status.** The *inputs* on the right are built; the Jev planner on the left is
+not. What exists: the `examples` store (offline ingest, retrieved by
+`turn_emotion`), open threads on Conversation State, a message window scoped to
+the current topic, and long-term memory (summaries and facts, recalled by
+keyword overlap under a count budget). What does not: `horizon`,
+`relevant_<id>`, and a token-level `ContextItem[]` budget. See §12–13.
 
 ## 1. Context layers
 
@@ -274,7 +275,8 @@ What shipped, what did not, and what brings the rest back.
 - `examples` — a table, an offline ingest (`npm run ingest`), a `turn_emotion`
   question, and seeded selection. 800 examples across the two shipped
   characters, tagged by Jev, 0 failed batches.
-- **Open threads** — `opens_thread` → `LLMOutput.openThread` → the
+- **Open threads** — `opens_thread` (or a topic set aside with `ignore` /
+  `acknowledge_return`, so `ask` can bring it back later) → `LLMOutput.openThread` → the
   `conversations.unresolved` column → back into Jev's state and the prompt when
   Jev chooses `topic_action: "ask"`. The stored list is the open set: an item is
   removed once the reply that asked about it was generated, and expires after 7
@@ -312,3 +314,35 @@ tag with primary matches first, and the ingest takes the whole show instead of
 The ingest also strips dialogue dashes, skips spans where a stage direction runs
 into the speech with no sentence break, and prunes rows the cut no longer
 produces (only after a run with no failed batch).
+
+## 13. Notes from the memory pass
+
+**Shipped.**
+
+- **Summaries and facts** (`src/context/memory.ts`, table `memories`). Once
+  `summaryMinChunk` (10) messages have fallen out of the `recentMessages` window,
+  one LLM call (`LLMClient.summarize`, its own `notes` tool) summarizes the
+  oldest chunk, up to `summaryMaxChunk` (40), and lists durable facts about the
+  user. It runs after the reply is queued, outside the conversation's critical
+  path; `conversations.summarized_until` is its own column with its own write, so
+  it cannot race `saveConversation`. A failure leaves the mark where it was and
+  the chunk is tried again on a later turn.
+- **Dates are dates.** Measured on the first live run: without the date of the
+  messages, "thesis defense on Thursday" was stored, and is wrong a week later.
+  The summarizer is told the day range and asked for "Thu 1 Oct".
+- **Recall is §5 rung 2.** Facts and summaries are ranked by 4-letter-prefix
+  overlap with the turn and topic, newest first on a tie, and capped by
+  `maxFacts` (12) and `maxSummaries` (2). With nothing in common it is simply
+  the newest notes, which is what just left the window.
+- **Relationship and user behaviour** (doc 06 §2.25–2.26) are derived per turn
+  from `messages` and never stored: first message, message count, average
+  length, median reply gap. Jev gets the numbers; the prompt gets a line only
+  where there is enough data to back it.
+
+**Still not built, and why.** The Jev planner (`horizon`, `relevant_<id>`). Now
+that candidates exist it has something to vote on, but keyword ranking already
+picks at most two summaries, and every new field in Jev's state has so far
+moved some *other* answer (see `opens_thread`). Add it the first time recall
+measurably picks the wrong note; measure the raw answer distribution first.
+Facts have no expiry or contradiction handling: a newer fact sits next to the
+older one, and the prompt says they may be out of date.

@@ -42,9 +42,18 @@ Reads `~/Downloads/rickmorty-transcripts/Rick-n-Morty.csv` (override with
 it: a character with no examples simply gets no example block, and replies
 normally.
 
-The ingest is also where those characters get their open threads — a
-`conversation.unresolved` list the bot is reminded to ask about. Nothing to set
-up; it fills as people mention things that have not happened yet.
+### Memory
+
+Nothing to set up for any of this; it fills from the conversation itself.
+
+- **Open threads.** A `conversation.unresolved` list of things the user
+  mentioned that have not happened yet (or a subject the character set aside),
+  which the bot is reminded to ask about later.
+- **Notes.** Once messages fall out of the recent window, a background LLM call
+  summarizes them and keeps durable facts about the user (table `memories`).
+  Replies get the notes that best match what is being talked about.
+- **Who they are to each other.** How long they have been talking and how the
+  user texts, derived from the message history on every turn.
 
 `LLM_STRUCTURED_MODE` picks how the reply schema is enforced: `tool` (default, reliable),
 `json_schema`, or `json_object`. On OpenCode Go, `json_schema` fails with a bare 400
