@@ -21,7 +21,7 @@ function env(name: string): string {
 }
 
 const MODES: StructuredMode[] = ["json_schema", "tool", "json_object"];
-const mode = (process.env.LLM_STRUCTURED_MODE ?? "json_schema") as StructuredMode;
+const mode = (process.env.LLM_STRUCTURED_MODE ?? "tool") as StructuredMode;
 if (!MODES.includes(mode)) throw new Error(`LLM_STRUCTURED_MODE must be one of ${MODES.join(", ")}`);
 
 /** Optional env overrides, so tuning a running character doesn't mean editing source. */
