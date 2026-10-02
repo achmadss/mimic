@@ -52,6 +52,15 @@ test("tool mode forces the reply tool and parses its arguments", async () => {
   assert.equal(out.messages[0].text, "yo");
 });
 
+test("summarize uses its own tool and schema, and retries a reply-shaped answer", async () => {
+  const f = fakeFetch([ok(VALID, true), ok({ summary: "we talked", facts: ["They cook."] }, true)]);
+  const out = await client("tool", f.fn).summarize([{ role: "user", content: "THEM: hi" }]);
+  assert.equal(f.calls[0].body.tool_choice.function.name, "notes");
+  assert.deepEqual(f.calls[0].body.tools[0].function.parameters.required, ["summary", "facts"]);
+  assert.equal(f.calls.length, 2, "an answer in the wrong shape is a schema mismatch, so it retries");
+  assert.deepEqual(out, { summary: "we talked", facts: ["They cook."] });
+});
+
 test("json_object mode appends the schema instruction", async () => {
   const f = fakeFetch([ok(VALID)]);
   await client("json_object", f.fn).generate([{ role: "user", content: "hi" }]);
@@ -96,7 +105,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, openThreadThreshold: 0.55 }), messageCount: 2 };
   const msgs = buildPrompt({
     profile: rick, decision, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: "portal gun",
-    recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], examples: [], askAbout: [], them: [], styles: [{ lowercase: false, typo: false, correct: false }, { lowercase: false, typo: false, correct: false }],
+    recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], styles: [{ lowercase: false, typo: false, correct: false }, { lowercase: false, typo: false, correct: false }],
   });
   assert.equal(msgs[0].role, "system");
   assert.match(msgs[0].content, /Rick Sanchez/);
@@ -108,7 +117,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   // the per-message budget comes from the character's own ceiling, scaled by Jev's length class
   const short = buildPrompt({
     profile: rick, decision: { ...decision, messageCount: 3, messageLength: "terse" }, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null,
-    recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], styles: [],
+    recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], styles: [],
   });
   const budget = Math.max(20, Math.round(rick.speechStyle.maxCharsPerMessage * 0.12)); // 20-char floor
   assert.match(short[0].content, new RegExp(`under about ${budget} characters`));
@@ -116,11 +125,11 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   assert.match(short[0].content, /exactly 3 message/);
   const long = buildPrompt({
     profile: rick, decision: { ...decision, messageCount: 1, messageLength: "long" }, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null,
-    recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], styles: [],
+    recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], styles: [],
   });
   assert.match(long[0].content, new RegExp(`under about ${rick.speechStyle.maxCharsPerMessage} characters`));
 
-  const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], examples: [], askAbout: [], them: [], styles: [] });
+  const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], styles: [] });
   assert.equal(fu.length, 1);
   assert.match(fu[0].content, /on your own/);
 });
@@ -128,7 +137,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
 const PROMPT_CTX = () => {
   const rick = loadProfiles("characters").get("rick")!;
   const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, openThreadThreshold: 0.55 }), messageCount: 1 };
-  return { rick, base: { profile: rick, decision, trigger: "user_turn" as const, activity: "idle" as const, localTime: "Thu 04:00", topic: null, recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], styles: [] } };
+  return { rick, base: { profile: rick, decision, trigger: "user_turn" as const, activity: "idle" as const, localTime: "Thu 04:00", topic: null, recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], them: [], facts: [], earlier: [], styles: [] } };
 };
 
 test("prompt: the authored character and the current mood reach the model", () => {
@@ -176,4 +185,14 @@ test("prompt: setting a topic aside asks the model to label it as the open threa
   assert.match(aside, /the one you are setting aside/);
   const normal = buildPrompt({ ...base, mood: "neutral" })[0].content;
   assert.match(normal, /otherwise set "openThread" to null/);
+});
+
+test("prompt: long-term memory and the relationship reach the model, and nothing when empty", () => {
+  const { base } = PROMPT_CTX();
+  const full = buildPrompt({ ...base, mood: "neutral", them: ["You have been texting this person for 3 weeks."], facts: ["They work at a bakery."], earlier: ["We argued about shifts."] })[0].content;
+  assert.match(full, /for 3 weeks/);
+  assert.match(full, /Things you know about them \(some may be out of date\): They work at a bakery\./);
+  assert.match(full, /Earlier, before the messages below:\n- We argued about shifts\./);
+  const empty = buildPrompt({ ...base, mood: "neutral" })[0].content;
+  assert.doesNotMatch(empty, /Things you know|Earlier, before/);
 });

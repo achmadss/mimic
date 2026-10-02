@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { attentionNow, formatLocalTime, speedMultiplier } from "../character/derived.ts";
 import { moodNow } from "../character/mood.ts";
 import { applyStyle, humanize, styleFor, type MessageStyle } from "../character/style.ts";
@@ -7,10 +7,11 @@ import type { Clock } from "../clock.ts";
 import type { Config } from "../config.ts";
 import { acquaintanceFrom, contextWindow, describeAcquaintance, nextOpenThreads, openThreads, selectExamples } from "../context/context.ts";
 import type { JevAnswers, JevClient } from "../jev/client.ts";
+import { recall, summarizeIfDue } from "../context/memory.ts";
 import { decide } from "../jev/decide.ts";
 import { buildQuestions } from "../jev/questions.ts";
 import { buildJevState } from "../jev/state.ts";
-import type { LLMClient } from "../llm/client.ts";
+import { sessionIdFor, type LLMClient } from "../llm/client.ts";
 import { buildPrompt } from "../llm/prompt.ts";
 import type { Scheduler } from "../scheduler.ts";
 import type { Store } from "../store.ts";
@@ -126,6 +127,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
     ? selectExamples(store.examplesFor(conv.characterId, decision.emotion, config.examplePool), config.maxExamples, generationId)
     : [];
   const asking = decision.topicAction === "ask" ? open : [];
+  const remembered = recall(store, conversationId, `${texts.join(" ")} ${conv.topic ?? ""}`, config);
   // What this turn was actually built from (doc 04 §2: recorded for explainability). The prompt is
   // not stored, but its inputs are, and they are what explain a surprising reply.
   store.appendEvent(conversationId, now, "CONTEXT_RETRIEVED", {
@@ -134,6 +136,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
     examples: examples.map((e) => e.id),
     openThreads: open.map((t) => t.id),
     asking: asking.map((t) => t.id),
+    memories: [...remembered.facts, ...remembered.summaries].map((m) => m.id),
   });
 
   let output: LLMOutput;
@@ -143,9 +146,10 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
         profile, decision, trigger, activity, mood, localTime, topic: conv.topic, recent, turn: texts,
         keptPending: kept.map((m) => m.text), styles, examples, askAbout: asking.map((t) => t.summary),
         them: describeAcquaintance(them, now),
+        facts: remembered.facts.map((m) => m.text),
+        earlier: remembered.summaries.map((m) => m.text),
       }),
-      // hashed: the provider gets a stable per-conversation routing key, not the user's platform chat id
-      { sessionId: createHash("sha256").update(conversationId).digest("hex").slice(0, 32) },
+      { sessionId: sessionIdFor(conversationId) },
     );
   } catch (e) {
     // A thread is consumed by being asked, and nothing was asked: the list is left untouched.
@@ -161,6 +165,8 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
     config,
   );
   store.tx(() => scheduleReply(d, conversationId, decision, output, kept, speed, generationId, styles, unresolved));
+  // after the reply is queued, never before it, and outside this queue's critical path
+  void summarizeIfDue(d, conversationId);
 }
 
 function applyDecision(d: Deps, conv: ConversationState, decision: BehaviorDecision, pending: BotMessage[], now: number): BotMessage[] {

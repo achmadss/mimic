@@ -1,5 +1,7 @@
-import type { LLMOutput } from "../types.ts";
-import { LLMOutputSchema, LLM_OUTPUT_JSON_SCHEMA } from "./schema.ts";
+import { createHash } from "node:crypto";
+import type { z } from "zod";
+import type { LLMOutput, SummaryOutput } from "../types.ts";
+import { LLMOutputSchema, LLM_OUTPUT_JSON_SCHEMA, SUMMARY_OUTPUT_JSON_SCHEMA, SummaryOutputSchema } from "./schema.ts";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -7,12 +9,28 @@ export interface ChatMessage {
 }
 export interface LLMClient {
   generate(messages: ChatMessage[], opts?: GenerateOptions): Promise<LLMOutput>;
+  /** Off the reply path: notes on a stretch of conversation that is leaving the recent window. */
+  summarize(messages: ChatMessage[], opts?: GenerateOptions): Promise<SummaryOutput>;
 }
+
+interface Shape<T> {
+  name: string;
+  description: string;
+  zod: z.ZodType<T>;
+  json: object;
+}
+const REPLY: Shape<LLMOutput> = { name: "reply", description: "Send the character's reply", zod: LLMOutputSchema, json: LLM_OUTPUT_JSON_SCHEMA };
+const NOTES: Shape<SummaryOutput> = { name: "notes", description: "Save notes on the conversation", zod: SummaryOutputSchema, json: SUMMARY_OUTPUT_JSON_SCHEMA };
 
 export interface GenerateOptions {
   /** Stable id for one conversation, so the provider can route and cache prompts per conversation. */
   sessionId?: string;
 }
+/** Hashed: the provider gets a stable per-conversation routing key, not the user's platform chat id. */
+export function sessionIdFor(conversationId: string): string {
+  return createHash("sha256").update(conversationId).digest("hex").slice(0, 32);
+}
+
 export type StructuredMode = "json_schema" | "tool" | "json_object";
 export interface OpenAICompatibleOptions {
   baseUrl: string;
@@ -42,26 +60,26 @@ export function openAICompatibleClient(o: OpenAICompatibleOptions): LLMClient {
   const f = o.fetchFn ?? fetch;
   const url = `${o.baseUrl.replace(/\/+$/, "")}/chat/completions`;
 
-  function requestBody(messages: ChatMessage[]) {
+  function requestBody<T>(messages: ChatMessage[], shape: Shape<T>) {
     const base = { model: o.model, messages };
     if (o.mode === "json_schema") {
-      return { ...base, response_format: { type: "json_schema", json_schema: { name: "reply", strict: true, schema: LLM_OUTPUT_JSON_SCHEMA } } };
+      return { ...base, response_format: { type: "json_schema", json_schema: { name: shape.name, strict: true, schema: shape.json } } };
     }
     if (o.mode === "tool") {
       return {
         ...base,
-        tools: [{ type: "function", function: { name: "reply", description: "Send the character's reply", parameters: LLM_OUTPUT_JSON_SCHEMA } }],
-        tool_choice: { type: "function", function: { name: "reply" } },
+        tools: [{ type: "function", function: { name: shape.name, description: shape.description, parameters: shape.json } }],
+        tool_choice: { type: "function", function: { name: shape.name } },
       };
     }
     return {
       ...base,
       response_format: { type: "json_object" },
-      messages: [...messages, { role: "system", content: `Respond with only a JSON object matching this JSON schema:\n${JSON.stringify(LLM_OUTPUT_JSON_SCHEMA)}` }],
+      messages: [...messages, { role: "system", content: `Respond with only a JSON object matching this JSON schema:\n${JSON.stringify(shape.json)}` }],
     };
   }
 
-  async function once(messages: ChatMessage[], opts?: GenerateOptions): Promise<LLMOutput> {
+  async function once<T>(messages: ChatMessage[], shape: Shape<T>, opts?: GenerateOptions): Promise<T> {
     let res: Response;
     try {
       res = await f(url, {
@@ -73,7 +91,7 @@ export function openAICompatibleClient(o: OpenAICompatibleOptions): LLMClient {
           // OpenCode Go requires a stable per-conversation session id for routing and prompt caching
           ...(opts?.sessionId ? { "x-opencode-session": opts.sessionId } : {}),
         },
-        body: JSON.stringify(requestBody(messages)),
+        body: JSON.stringify(requestBody(messages, shape)),
         signal: AbortSignal.timeout(o.timeoutMs ?? 60_000),
       });
     } catch (e) {
@@ -91,22 +109,25 @@ export function openAICompatibleClient(o: OpenAICompatibleOptions): LLMClient {
     } catch (e) {
       throw e instanceof RetryableError ? e : new RetryableError(`invalid JSON: ${(e as Error).message}`);
     }
-    const out = LLMOutputSchema.safeParse(parsed);
+    const out = shape.zod.safeParse(parsed);
     if (!out.success) throw new RetryableError(`schema mismatch: ${out.error.message}`);
     return out.data;
   }
 
-  return {
-    async generate(messages, opts) {
-      const attempts = 1 + (o.retries ?? 2);
-      for (let i = 0; ; i++) {
-        try {
-          return await once(messages, opts);
-        } catch (e) {
-          if (!(e instanceof RetryableError) || i + 1 >= attempts) throw e;
-          await new Promise((r) => setTimeout(r, (o.retryDelayMs ?? 500) * 2 ** i));
-        }
+  async function withRetries<T>(messages: ChatMessage[], shape: Shape<T>, opts?: GenerateOptions): Promise<T> {
+    const attempts = 1 + (o.retries ?? 2);
+    for (let i = 0; ; i++) {
+      try {
+        return await once(messages, shape, opts);
+      } catch (e) {
+        if (!(e instanceof RetryableError) || i + 1 >= attempts) throw e;
+        await new Promise((r) => setTimeout(r, (o.retryDelayMs ?? 500) * 2 ** i));
       }
-    },
+    }
+  }
+
+  return {
+    generate: (messages, opts) => withRetries(messages, REPLY, opts),
+    summarize: (messages, opts) => withRetries(messages, NOTES, opts),
   };
 }

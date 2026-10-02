@@ -58,6 +58,15 @@ CREATE TABLE IF NOT EXISTS examples (
   lines TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS examples_character_emotion ON examples (character_id, emotion);
+CREATE TABLE IF NOT EXISTS memories (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('summary', 'fact')),
+  text TEXT NOT NULL,
+  from_at INTEGER NOT NULL,
+  to_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS memories_conv ON memories (conversation_id, kind, to_at);
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   conversation_id TEXT NOT NULL,
@@ -73,6 +82,7 @@ const MIGRATIONS: [table: string, column: string, type: string][] = [
   ["character_state", "mood_changed_at", "INTEGER"],
   ["conversations", "unresolved", "TEXT"],
   ["examples", "secondary", "TEXT"],
+  ["conversations", "summarized_until", "INTEGER NOT NULL DEFAULT 0"],
 ];
 
 export function openDb(path: string): DB {

@@ -4,12 +4,12 @@ import { loadProfiles } from "../src/character/profile.ts";
 import { openDb } from "../src/db.ts";
 import type { DeliveryAdapter, IncomingText } from "../src/delivery/types.ts";
 import type { JevAnswer, JevAnswers, JevClient, JevQuestion } from "../src/jev/client.ts";
-import type { ChatMessage, LLMClient } from "../src/llm/client.ts";
+import type { ChatMessage, GenerateOptions, LLMClient } from "../src/llm/client.ts";
 import { InteractionManager } from "../src/im/manager.ts";
 import { Scheduler } from "../src/scheduler.ts";
 import { Store } from "../src/store.ts";
 import type { Deps } from "../src/im/respond.ts";
-import type { LLMOutput, Platform } from "../src/types.ts";
+import type { LLMOutput, Platform, SummaryOutput } from "../src/types.ts";
 
 export const choice = (c: string, confidence = 0.9): JevAnswer => ({ type: "choice", choice: c, confidence, probabilities: { [c]: confidence } });
 export const noul = (p: number): JevAnswer => ({ type: "noul", noul: p });
@@ -33,6 +33,16 @@ export class FakeLLM implements LLMClient {
   async generate(messages: ChatMessage[]) {
     this.calls.push(messages);
     const o = this.outputs.shift() ?? { messages: [{ text: "ok" }] };
+    if (o instanceof Error) throw o;
+    return o;
+  }
+  summaryCalls: ChatMessage[][] = [];
+  summaryOpts: (GenerateOptions | undefined)[] = [];
+  summaries: (SummaryOutput | Error)[] = [];
+  async summarize(messages: ChatMessage[], opts?: GenerateOptions) {
+    this.summaryCalls.push(messages);
+    this.summaryOpts.push(opts);
+    const o = this.summaries.shift() ?? { summary: "they talked", facts: [] };
     if (o instanceof Error) throw o;
     return o;
   }

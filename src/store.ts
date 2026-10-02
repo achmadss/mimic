@@ -1,5 +1,5 @@
 import type { DB } from "./db.ts";
-import type { ActionRow, BotMessage, CharacterState, ConversationState, Emotion, Example, MessageStatus, Platform, TurnBuffer, UnresolvedItem } from "./types.ts";
+import type { ActionRow, BotMessage, CharacterState, ConversationState, Emotion, Example, MemoryItem, MessageStatus, Platform, TurnBuffer, UnresolvedItem } from "./types.ts";
 
 type Row = Record<string, any>;
 
@@ -168,12 +168,46 @@ export class Store {
       .all(conversationId, before, since, limit) as { role: "user" | "bot"; text: string; at: number }[];
   }
 
+  /**
+   * Its own column and its own write: the summarizer runs outside the conversation's queue, and
+   * `saveConversation` never touches this column, so neither can overwrite the other.
+   */
+  summarizedUntil(conversationId: string): number {
+    const r = this.db.prepare("SELECT summarized_until AS t FROM conversations WHERE id = ?").get(conversationId) as Row | undefined;
+    return r?.t ?? 0;
+  }
+
+  saveMemories(conversationId: string, items: MemoryItem[], summarizedUntil: number) {
+    const ins = this.db.prepare("INSERT INTO memories (id, conversation_id, kind, text, from_at, to_at) VALUES (?, ?, ?, ?, ?, ?)");
+    for (const m of items) ins.run(m.id, m.conversationId, m.kind, m.text, m.fromAt, m.toAt);
+    this.db.prepare("UPDATE conversations SET summarized_until = ? WHERE id = ?").run(summarizedUntil, conversationId);
+  }
+
+  /** Newest first. */
+  memories(conversationId: string, kind: MemoryItem["kind"], limit: number): MemoryItem[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM memories WHERE conversation_id = ? AND kind = ? ORDER BY to_at DESC, rowid DESC LIMIT ?")
+        .all(conversationId, kind, limit) as Row[]
+    ).map((r) => ({ id: r.id, conversationId: r.conversation_id, kind: r.kind, text: r.text, fromAt: r.from_at, toAt: r.to_at }));
+  }
+
   /** When they first wrote, and how many messages they have sent in all. */
   userMessageStats(conversationId: string): { firstAt: number | null; count: number } {
     const r = this.db
       .prepare("SELECT MIN(at) AS firstAt, COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'user'")
       .get(conversationId) as Row;
     return { firstAt: r.firstAt ?? null, count: r.n };
+  }
+
+  /** User messages plus sent bot messages strictly after `after`, oldest first. */
+  messagesAfter(conversationId: string, after: number): { role: "user" | "bot"; text: string; at: number }[] {
+    return this.db
+      .prepare(
+        `SELECT role, text, at FROM messages WHERE conversation_id = ? AND at > ? AND (role = 'user' OR status = 'sent')
+         ORDER BY at, rowid`,
+      )
+      .all(conversationId, after) as { role: "user" | "bot"; text: string; at: number }[];
   }
 
   insertBotMessage(m: BotMessage) {

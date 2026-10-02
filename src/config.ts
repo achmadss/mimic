@@ -40,6 +40,16 @@ export interface Config {
   unresolvedMax: number;
   unresolvedTtlMs: number;
   maxChars: Record<Platform, number>;
+  /**
+   * Summarize once this many messages have fallen out of the `recentMessages` window — before then
+   * the model can still see them, and a summary of three lines is noise.
+   */
+  summaryMinChunk: number;
+  /** Cap on one summarizer call, so a long backlog becomes several notes instead of one vague one. */
+  summaryMaxChunk: number;
+  /** Long-term memory per turn (doc 05 §4 budget): facts about them, and summaries of earlier talk. */
+  maxFacts: number;
+  maxSummaries: number;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -60,4 +70,8 @@ export const DEFAULT_CONFIG: Config = {
   unresolvedMax: 5,
   unresolvedTtlMs: 7 * 24 * 3_600_000,
   maxChars: { telegram: 4096, discord: 2000, cli: 2000 },
+  summaryMinChunk: 10,
+  summaryMaxChunk: 40,
+  maxFacts: 12,
+  maxSummaries: 2,
 };

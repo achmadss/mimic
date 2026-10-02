@@ -125,6 +125,22 @@ export interface BehaviorDecision {
   answers: unknown; // raw Jev answers, for the event log
 }
 
+export interface SummaryOutput {
+  summary: string;
+  /** Durable things about the user, one short sentence each. */
+  facts: string[];
+}
+
+/** Doc 05 §1 long-term layer. A summary covers `fromAt..toAt`; a fact was learned in that span. */
+export interface MemoryItem {
+  id: string;
+  conversationId: string;
+  kind: "summary" | "fact";
+  text: string;
+  fromAt: number;
+  toAt: number;
+}
+
 export interface LLMOutput {
   messages: { text: string; correction?: string | null }[];
   topic?: string | null;

@@ -69,10 +69,18 @@ function clamp(text: string): string {
   return t.length <= 80 ? t : `${t.slice(0, 80).replace(/\s+\S*$/, "")}...`;
 }
 
+/** Distinct 4-letter prefixes of the words of 4+ letters: `quitting` and `quit` share `quit`. */
+export function keywords(text: string): Set<string> {
+  return new Set((text.toLowerCase().match(/[a-z]{4,}/g) ?? []).map((w) => w.slice(0, 4)));
+}
+
+export function overlap(a: string, b: string): number {
+  const kb = keywords(b);
+  return [...keywords(a)].filter((k) => kb.has(k)).length;
+}
+
 function aboutSameThing(summary: string, about: string): boolean {
-  const words = (s: string) => s.toLowerCase().match(/[a-z]{4,}/g) ?? [];
-  const them = words(about);
-  return words(summary).some((w) => them.some((v) => w.slice(0, 4) === v.slice(0, 4)));
+  return overlap(summary, about) > 0;
 }
 
 /**
