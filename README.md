@@ -25,8 +25,8 @@ that appears, and save the Jev key; then paste each character's bot tokens on
 their page. All of that is stored in the database, not `.env`, which only holds
 app settings (see `.env.example`).
 - **`DASHBOARD_PASSWORD` is required** in the container: the dashboard listens
-  on all interfaces inside it, and refuses to do that without one. Compose only
-  publishes it on this machine's localhost.
+  on all interfaces inside it, and refuses to do that without one. Compose
+  publishes port 8787 on every interface, so other machines can reach it too.
 - **Your data is in `./data`** (database, with keys and tokens; saved settings) and `./characters`.
   Both are mounted, so rebuilding the image loses nothing.
 - **Bringing over an existing database:** stop the bot first, then

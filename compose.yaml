@@ -4,8 +4,8 @@ services:
     restart: unless-stopped
     init: true
     ports:
-      # the dashboard, on this machine only
-      - "127.0.0.1:8787:8787"
+      # the dashboard, on every interface: DASHBOARD_PASSWORD guards it
+      - "8787:8787"
     # app settings only; keys, tokens and models are set in the dashboard and kept in data/
     env_file:
       - path: .env
