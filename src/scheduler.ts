@@ -23,9 +23,9 @@ export class Scheduler {
     this.disarm(id);
   }
 
-  /** Boot: arm every stored row, earliest first. Overdue rows fire on the next tick, in order. */
-  armAll() {
-    for (const row of this.store.allActions()) this.arm(row);
+  /** Boot: arm every stored row this process owns, earliest first. Overdue rows fire on the next tick, in order. */
+  armAll(owns: (row: ActionRow) => boolean = () => true) {
+    for (const row of this.store.allActions()) if (owns(row)) this.arm(row);
   }
 
   private arm(row: ActionRow) {

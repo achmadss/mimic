@@ -2,7 +2,8 @@ import { availability, PRESENCE } from "./character/derived.ts";
 import { loadProfiles } from "./character/profile.ts";
 import { RoutineEngine } from "./character/routine-engine.ts";
 import { realClock } from "./clock.ts";
-import { DEFAULT_CONFIG, type Config } from "./config.ts";
+import { applyConfig, DEFAULT_CONFIG, readConfigFile, type Config } from "./config.ts";
+import { startDashboard } from "./dashboard/server.ts";
 import { openDb } from "./db.ts";
 import { CliAdapter } from "./delivery/cli.ts";
 import { DiscordAdapter } from "./delivery/discord.ts";
@@ -28,7 +29,7 @@ if (!MODES.includes(mode)) throw new Error(`LLM_STRUCTURED_MODE must be one of $
 function configFromEnv(): Config {
   const num = (name: string, fallback: number) => (process.env[name] ? Number(process.env[name]) : fallback);
   return {
-    ...DEFAULT_CONFIG,
+    ...structuredClone(DEFAULT_CONFIG),
     quietMs: num("MIMIC_QUIET_MS", DEFAULT_CONFIG.quietMs),
     followUpThreshold: num("MIMIC_FOLLOW_UP_THRESHOLD", DEFAULT_CONFIG.followUpThreshold),
     openThreadThreshold: num("MIMIC_OPEN_THREAD_THRESHOLD", DEFAULT_CONFIG.openThreadThreshold),
@@ -36,7 +37,8 @@ function configFromEnv(): Config {
 }
 
 const store = new Store(openDb(process.env.DB_PATH ?? "mimic.db"));
-const profiles = loadProfiles("characters");
+const CHARACTERS_DIR = process.env.MIMIC_CHARACTERS ?? "characters";
+const profiles = loadProfiles(CHARACTERS_DIR);
 const jev = httpJevClient({ apiKey: env("TYPESAFE_API_KEY") });
 const llm = openAICompatibleClient({ baseUrl: env("LLM_BASE_URL"), apiKey: env("LLM_API_KEY"), model: env("LLM_MODEL"), mode });
 
@@ -61,8 +63,13 @@ if (adapters.size === 0) throw new Error("no adapters: set bot token env vars, o
 
 const log = (m: string, e?: unknown) => console.error(`[mimic] ${m}`, e ?? "");
 
+// env, then whatever the dashboard saved on top: the last thing someone set is what runs
+const CONFIG_PATH = process.env.MIMIC_CONFIG ?? "mimic.config.json";
+const config = configFromEnv();
+applyConfig(config, readConfigFile(CONFIG_PATH));
+
 const im = new InteractionManager(
-  { store, clock: realClock, jev, llm, profiles, config: configFromEnv(), log },
+  { store, clock: realClock, jev, llm, profiles, config, log },
   (characterId, platform) => {
     const a = adapters.get(key(characterId, platform));
     if (!a) throw new Error(`no adapter for ${characterId} on ${platform}`);
@@ -96,6 +103,13 @@ await im.recover();
 routine.start();
 // start() reports only what moved; a character who did not change still needs their status set
 for (const characterId of profiles.keys()) setPresence(characterId, store.getCharacterState(characterId, realClock.now()).activity);
+
+if (process.env.DASHBOARD !== "off") {
+  startDashboard(
+    { store, clock: realClock, im, routine, profiles, config, configPath: CONFIG_PATH, charactersDir: CHARACTERS_DIR, running: new Set(adapters.keys()), env: process.env },
+    { host: process.env.DASHBOARD_HOST ?? "127.0.0.1", port: Number(process.env.DASHBOARD_PORT ?? 8787), password: process.env.DASHBOARD_PASSWORD || undefined },
+  );
+}
 
 process.on("SIGINT", async () => {
   routine.stop();

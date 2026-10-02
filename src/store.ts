@@ -67,6 +67,29 @@ export class Store {
     return r && { at: r.at, payload: JSON.parse(r.payload) };
   }
 
+  /** Newest first. For the dashboard: the log is the explanation of everything the bot did. */
+  recentEvents(conversationId: string, limit: number): { seq: number; at: number; type: string; payload: any }[] {
+    return (
+      this.db.prepare("SELECT seq, at, type, payload FROM events WHERE conversation_id = ? ORDER BY seq DESC LIMIT ?").all(conversationId, limit) as Row[]
+    ).map((r) => ({ seq: r.seq, at: r.at, type: r.type, payload: JSON.parse(r.payload) }));
+  }
+
+  /** Every conversation with its message count, most recently active first. */
+  listConversations(): (ConversationState & { messageCount: number })[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
+           FROM conversations c ORDER BY MAX(c.last_user_at, c.last_bot_at) DESC`,
+        )
+        .all() as Row[]
+    ).map((r) => ({ ...toConversation(r), messageCount: r.message_count }));
+  }
+
+  deleteMemory(id: string): boolean {
+    return this.db.prepare("DELETE FROM memories WHERE id = ?").run(id).changes === 1;
+  }
+
   /** Returns how many went. */
   forgetMemories(conversationId: string): number {
     return this.db.prepare("DELETE FROM memories WHERE conversation_id = ?").run(conversationId).changes;

@@ -245,3 +245,25 @@ test("typing follows a cancelled message and stops with it", async () => {
   await t.tick(LONG);
   assert.equal(t.adapter.typed.length, typed);
 });
+
+test("a process leaves alone conversations on platforms it is not running", async () => {
+  const { InteractionManager } = await import("../src/im/manager.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { loadProfiles } = await import("../src/character/profile.ts");
+  const t = setupIM();
+  const tg = t.store.getOrCreateConversation("rick", "telegram", "42").conversationId;
+  t.store.putAction({ id: `followup:${tg}`, conversationId: tg, kind: "delayed_followup", dueAt: t.clock.now() - 1000 });
+  // the CLI process: only a cli adapter, like `npm run cli` against the live database
+  const cliOnly = new InteractionManager(
+    { store: t.store, clock: t.clock, jev: t.jev, llm: t.llm, profiles: loadProfiles("characters"), config: DEFAULT_CONFIG, log: () => {} },
+    (_c, platform) => {
+      if (platform !== "cli") throw new Error(`no adapter for ${platform}`);
+      return t.adapter;
+    },
+  );
+  await cliOnly.recover();
+  t.clock.advance(LONG);
+  await cliOnly.drain();
+  assert.equal(t.jev.calls.length, 0, "the Telegram follow-up was not fired");
+  assert.ok(t.store.getAction(`followup:${tg}`), "and is still there for the Telegram process");
+});

@@ -1,3 +1,5 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { z } from "zod";
 import type { Platform } from "./types.ts";
 
 export interface Config {
@@ -52,7 +54,7 @@ export interface Config {
   maxSummaries: number;
 }
 
-export const DEFAULT_CONFIG: Config = {
+export const DEFAULT_CONFIG: Readonly<Config> = {
   quietMs: 2500,
   maxTurnMs: 20_000,
   maxDelayMs: 120_000,
@@ -75,3 +77,40 @@ export const DEFAULT_CONFIG: Config = {
   maxFacts: 12,
   maxSummaries: 2,
 };
+
+const num = z.number().finite().nonnegative();
+/** Every key optional: a saved file holds only what was changed, and new defaults still apply. */
+export const ConfigOverridesSchema = z
+  .object({
+    ...Object.fromEntries(Object.keys(DEFAULT_CONFIG).filter((k) => k !== "maxChars").map((k) => [k, num])),
+    maxChars: z.object({ telegram: num, discord: num, cli: num }).partial(),
+  })
+  .partial()
+  .strict();
+
+/** The dashboard's saved settings. Absent file = no overrides. */
+export function readConfigFile(path: string): Partial<Config> {
+  if (!existsSync(path)) return {};
+  const parsed = ConfigOverridesSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
+  if (!parsed.success) throw new Error(`invalid ${path}: ${parsed.error.message}`);
+  return parsed.data as Partial<Config>;
+}
+
+/** Applies in place, so every holder of `config` sees the change on its next read. */
+export function applyConfig(config: Config, overrides: Partial<Config>) {
+  const { maxChars, ...rest } = overrides;
+  Object.assign(config, rest);
+  if (maxChars) Object.assign(config.maxChars, maxChars);
+}
+
+/** Only what differs from the defaults is written, so a later default change is not shadowed. */
+export function writeConfigFile(path: string, config: Config) {
+  const diff: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(config)) {
+    if (k === "maxChars") {
+      const mc = Object.fromEntries(Object.entries(config.maxChars).filter(([p, n]) => DEFAULT_CONFIG.maxChars[p as Platform] !== n));
+      if (Object.keys(mc).length) diff.maxChars = mc;
+    } else if (DEFAULT_CONFIG[k as keyof Config] !== v) diff[k] = v;
+  }
+  writeFileSync(path, `${JSON.stringify(diff, null, 2)}\n`);
+}

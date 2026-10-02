@@ -42,6 +42,28 @@ Reads `~/Downloads/rickmorty-transcripts/Rick-n-Morty.csv` (override with
 it: a character with no examples simply gets no example block, and replies
 normally.
 
+### Dashboard
+
+While the bot runs, **http://127.0.0.1:8787** is a dashboard for all of it:
+
+- **Overview** — each character's activity, mood and local time, and whether
+  each platform is running, waiting for a restart, or missing its token.
+- **Characters** — every profile field as a form, routine rows included.
+  Validated on save, written back to `characters/<id>.json`, and live on the
+  next message; the routine is re-armed at once. New characters start from
+  `_template.json`. Token env vars and platform bindings need a restart, and
+  the page says so.
+- **Settings** — every engine knob, saved to `mimic.config.json` (only what
+  differs from the defaults) and live on the next message. Saved settings win
+  over the `MIMIC_*` env overrides.
+- **Conversations** — the messages, queued replies, open threads, facts, notes
+  and event log of each chat. Delete a single fact or thread, forget a chat's
+  memory, or reset it.
+
+It listens on localhost only. To reach it from elsewhere, set `DASHBOARD_HOST`
+and `DASHBOARD_PASSWORD` together (it refuses to start without the password).
+Tokens are never shown or edited there; they stay in `.env`.
+
 ### Commands
 
 Out-of-character controls, in any chat with a character. Each one acts on that

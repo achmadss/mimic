@@ -37,6 +37,15 @@ export class RoutineEngine {
     for (const characterId of this.o.profiles.keys()) this.arm(characterId);
   }
 
+  /** A profile was edited or added: land it in the slot its new routine says, and re-arm. */
+  reload(characterId: string) {
+    const h = this.handles.get(characterId);
+    if (h !== undefined) this.o.clock.clearTimeout(h);
+    this.handles.delete(characterId);
+    this.sync(characterId);
+    this.arm(characterId);
+  }
+
   stop() {
     for (const h of this.handles.values()) this.o.clock.clearTimeout(h);
     this.handles.clear();

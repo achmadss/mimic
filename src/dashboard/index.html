@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mimic</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e3e2dd;
+    --accent: #2f6f5e; --accent-ink: #ffffff; --warn: #a3521b; --bad: #b3261e; --chip: #efeee9;
+    --user: #e6efe9; --bot: #f1f0ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151514; --panel: #1e1e1c; --ink: #ecebe6; --muted: #9a9a93; --line: #31312e;
+      --accent: #6cbfa6; --accent-ink: #0f1f1a; --warn: #e0965a; --bad: #f2867d; --chip: #2a2a27;
+      --user: #23332d; --bot: #262624;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .shell { display: grid; grid-template-columns: 200px 1fr; min-height: 100vh; }
+  nav { border-right: 1px solid var(--line); padding: 20px 12px; position: sticky; top: 0; height: 100vh; }
+  nav .brand { font-weight: 700; font-size: 16px; padding: 0 10px 16px; }
+  nav a { display: block; padding: 7px 10px; border-radius: 6px; color: var(--ink); }
+  nav a.on { background: var(--chip); font-weight: 600; }
+  nav a:hover { text-decoration: none; background: var(--chip); }
+  main { padding: 28px 32px 80px; max-width: 1100px; width: 100%; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 28px 0 10px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .chip { display: inline-block; background: var(--chip); border-radius: 999px; padding: 1px 9px; font-size: 12px; }
+  .chip.ok { color: var(--accent); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+  .muted { color: var(--muted); }
+  .stat { font-size: 26px; font-weight: 650; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  button.x { border: none; background: none; color: var(--muted); padding: 0 4px; }
+  button.x:hover { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr.link { cursor: pointer; }
+  tbody tr.link:hover { background: var(--chip); }
+  fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 12px; background: var(--panel); }
+  fieldset fieldset { background: transparent; }
+  legend { font-weight: 600; padding: 0 6px; }
+  label.field { display: grid; grid-template-columns: 190px 1fr; gap: 10px; align-items: start; margin: 6px 0; }
+  label.field > span { color: var(--muted); padding-top: 6px; word-break: break-word; }
+  label.field small { display: block; font-size: 11px; color: var(--muted); }
+  input, textarea, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; }
+  textarea { resize: vertical; min-height: 60px; }
+  input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .invalid { border-color: var(--bad) !important; }
+  .changed > span { color: var(--accent); font-weight: 600; }
+  .bar { position: sticky; bottom: 0; background: var(--bg); padding: 12px 0; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
+  .errors { color: var(--bad); white-space: pre-wrap; }
+  .toast { position: fixed; right: 20px; bottom: 20px; background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 420px; }
+  .toast.show { opacity: 1; }
+  .chat { display: flex; flex-direction: column; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; max-height: 480px; overflow: auto; }
+  .msg { max-width: 75%; padding: 6px 10px; border-radius: 10px; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--user); }
+  .msg.bot { align-self: flex-start; background: var(--bot); }
+  .msg time { display: block; font-size: 11px; color: var(--muted); }
+  ul.items { list-style: none; padding: 0; margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  ul.items li { padding: 8px 12px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; justify-content: space-between; }
+  ul.items li:last-child { border-bottom: none; }
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin: 4px 0; }
+  details pre { margin: 6px 0 0; font-size: 12px; overflow: auto; }
+  summary { cursor: pointer; }
+  @media (max-width: 760px) {
+    .shell { grid-template-columns: 1fr; }
+    nav { position: static; height: auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 10px; border-right: none; border-bottom: 1px solid var(--line); }
+    nav .brand { padding: 7px 10px; }
+    main { padding: 18px 16px 80px; }
+    label.field { grid-template-columns: 1fr; gap: 2px; }
+    label.field > span { padding-top: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav>
+    <div class="brand">mimic</div>
+    <a href="#/" data-nav="">Overview</a>
+    <a href="#/characters" data-nav="characters">Characters</a>
+    <a href="#/conversations" data-nav="conversations">Conversations</a>
+    <a href="#/settings" data-nav="settings">Settings</a>
+  </nav>
+  <main id="main"></main>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const $main = document.getElementById("main");
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const h = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+
+function toast(text) {
+  const t = document.getElementById("toast");
+  t.textContent = text; t.classList.add("show");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("show"), 3500);
+}
+
+async function api(method, path, body) {
+  const res = await fetch(path, { method, headers: method === "GET" ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(data.error || res.statusText); e.issues = data.issues; throw e; }
+  return data;
+}
+
+function ago(at) {
+  if (!at) return "never";
+  const s = (Date.now() - at) / 1000;
+  return s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
+}
+const when = (at) => new Date(at).toLocaleString();
+
+/* ---------- a form for any JSON value: inputs write into `state` by path ---------- */
+
+const LONG_TEXT = new Set(["persona", "background", "relationship"]);
+const LIST_HINT = "one per line";
+
+function getIn(o, path) { return path.reduce((v, k) => v?.[k], o); }
+function setIn(o, path, v) { const last = path[path.length - 1]; getIn(o, path.slice(0, -1))[last] = v; }
+
+function buildForm(state, opts, rerender) {
+  const root = document.createElement("div");
+  const label = (path, inner, note) => {
+    const el = h(`<label class="field" data-path="${esc(path.join("."))}"><span>${esc(path[path.length - 1])}${note ? `<small>${esc(note)}</small>` : ""}</span></label>`);
+    el.append(inner);
+    return el;
+  };
+  function input(path, value) {
+    const key = String(path[path.length - 1]);
+    const enumOpts = opts.enumFor?.(path);
+    let el;
+    if (enumOpts) {
+      el = h(`<select>${enumOpts.map((o) => `<option ${o === value ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`);
+      el.onchange = () => setIn(state, path, el.value);
+    } else if (typeof value === "number") {
+      el = h(`<input type="number" step="any" value="${esc(value)}">`);
+      el.oninput = () => setIn(state, path, el.value === "" ? null : Number(el.value));
+    } else if (typeof value === "boolean") {
+      el = h(`<input type="checkbox" ${value ? "checked" : ""} style="width:auto">`);
+      el.onchange = () => setIn(state, path, el.checked);
+    } else if (Array.isArray(value)) {
+      el = h(`<textarea rows="${Math.max(2, value.length + 1)}"></textarea>`);
+      el.value = value.join("\n");
+      el.oninput = () => setIn(state, path, el.value.split("\n").map((s) => s.trim()).filter(Boolean));
+      return label(path, el, LIST_HINT);
+    } else if (LONG_TEXT.has(key) || String(value ?? "").length > 70) {
+      el = h(`<textarea rows="4"></textarea>`);
+      el.value = value ?? "";
+      el.oninput = () => setIn(state, path, el.value);
+    } else {
+      el = h(`<input type="text" value="${esc(value)}">`);
+      el.oninput = () => setIn(state, path, el.value);
+    }
+    return label(path, el, opts.noteFor?.(path));
+  }
+  function node(path, value, parent) {
+    const custom = opts.custom?.(path, value, rerender);
+    if (custom) return parent.append(custom);
+    const isObjList = Array.isArray(value) && value.length && typeof value[0] === "object";
+    if (isObjList) {
+      const fs = h(`<fieldset><legend>${esc(path[path.length - 1])}</legend></fieldset>`);
+      value.forEach((item, i) => {
+        const inner = h(`<fieldset><legend>#${i + 1} <button type="button" class="x" title="Remove">✕</button></legend></fieldset>`);
+        inner.querySelector("button").onclick = () => { value.splice(i, 1); rerender(); };
+        for (const [k, v] of Object.entries(item)) node([...path, i, k], v, inner);
+        fs.append(inner);
+      });
+      const add = h(`<button type="button">+ Add</button>`);
+      add.onclick = () => { value.push(structuredClone(value[value.length - 1])); rerender(); };
+      fs.append(add);
+      return parent.append(fs);
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const fs = path.length ? h(`<fieldset><legend>${esc(path[path.length - 1])}</legend></fieldset>`) : root;
+      for (const [k, v] of Object.entries(value)) node([...path, k], v, fs);
+      if (opts.openRecord?.(path)) {
+        const add = h(`<button type="button">+ Add field</button>`);
+        add.onclick = () => { const k = prompt("Field name"); if (k) { value[k] = 0; rerender(); } };
+        fs.append(add);
+      }
+      if (fs !== root) parent.append(fs);
+      return;
+    }
+    parent.append(input(path, value));
+  }
+  node([], state, root);
+  return root;
+}
+
+function showIssues(form, box, e) {
+  form.querySelectorAll(".invalid").forEach((el) => el.classList.remove("invalid"));
+  const issues = e.issues || [];
+  box.textContent = issues.length ? `${e.message}:\n` + issues.map((i) => `• ${i.path || "(root)"}: ${i.message}`).join("\n") : e.message;
+  for (const i of issues) {
+    const el = form.querySelector(`[data-path="${CSS.escape(i.path)}"]`)
+      || form.querySelector(`[data-path^="${CSS.escape(i.path)}."]`);
+    el?.querySelector("input, textarea, select")?.classList.add("invalid");
+  }
+  form.querySelector(".invalid")?.scrollIntoView({ block: "center" });
+}
+
+/* ---------- pages ---------- */
+
+let enums = { activity: [], basePace: [] };
+
+async function overview() {
+  const o = await api("GET", "/api/overview");
+  enums = o.enums;
+  $main.replaceChildren(h(`<div>
+    <h1>Overview</h1><p class="sub">${o.characters.length} characters · ${o.conversations} conversations · ${o.examples} voice examples</p>
+    <div class="grid">${o.characters.map((c) => `
+      <div class="card">
+        <div class="row" style="justify-content:space-between"><h3><a href="#/characters/${esc(c.id)}">${esc(c.name)}</a></h3>
+          <span class="chip ${c.availability === "available" ? "ok" : c.availability === "sleeping" ? "" : "warn"}">${esc(c.availability)}</span></div>
+        <div>${esc(c.activity)} <span class="muted">for ${ago(c.activitySince).replace(" ago", "")}</span></div>
+        <div class="muted">${esc(c.localTime)} their time${c.mood !== "neutral" ? ` · feeling ${esc(c.mood)}` : ""}</div>
+        <div class="row" style="margin-top:10px">${Object.entries(c.platforms).map(([p, s]) =>
+          `<span class="chip ${s.running ? "ok" : s.set ? "warn" : "bad"}" title="${esc(s.env)}">${esc(p)}: ${s.running ? "running" : s.set ? "restart to start" : `set ${esc(s.env)}`}</span>`).join("") || `<span class="chip">CLI only</span>`}</div>
+        <div class="muted" style="margin-top:8px"><a href="#/conversations?c=${esc(c.id)}">${c.conversations} conversation(s)</a></div>
+      </div>`).join("")}
+    </div></div>`));
+}
+
+async function characters() {
+  const o = await api("GET", "/api/overview");
+  enums = o.enums;
+  const page = h(`<div><div class="row" style="justify-content:space-between"><h1>Characters</h1><button class="primary" id="new">New character</button></div>
+    <p class="sub">Each one is a file in <code>characters/</code>. Edits apply on the next message.</p>
+    <table><thead><tr><th>Name</th><th>Id</th><th>Now</th><th>Platforms</th></tr></thead><tbody>${o.characters.map((c) => `
+      <tr class="link" data-id="${esc(c.id)}"><td><b>${esc(c.name)}</b></td><td class="muted">${esc(c.id)}</td><td>${esc(c.activity)}</td>
+      <td>${Object.keys(c.platforms).map(esc).join(", ") || "CLI only"}</td></tr>`).join("")}</tbody></table></div>`);
+  page.querySelectorAll("tr.link").forEach((tr) => (tr.onclick = () => (location.hash = `#/characters/${tr.dataset.id}`)));
+  page.querySelector("#new").onclick = async () => {
+    const id = prompt("Character id (lowercase letters, digits, _). It cannot change later.");
+    if (!id) return;
+    try {
+      await api("POST", "/api/characters", { characterId: id });
+      toast("Created from the template. Restart to put it on Telegram/Discord.");
+      location.hash = `#/characters/${id}`;
+    } catch (e) { toast(e.message); }
+  };
+  $main.replaceChildren(page);
+}
+
+async function character(id) {
+  if (!enums.activity.length) enums = (await api("GET", "/api/overview")).enums;
+  const { profile, platforms } = await api("GET", `/api/characters/${encodeURIComponent(id)}`);
+  const state = structuredClone(profile);
+  const page = h(`<div><h1>${esc(profile.name)}</h1>
+    <p class="sub">characters/ · <code>${esc(id)}</code> · changes apply on the next message; platform changes need a restart</p>
+    <div id="form"></div>
+    <div class="bar"><button class="primary" id="save">Save</button><button id="revert">Revert</button><span class="errors" id="err"></span></div></div>`);
+  const formBox = page.querySelector("#form");
+  const opts = {
+    enumFor: (p) => p[p.length - 1] === "basePace" ? enums.basePace : p[0] === "routine" && p[2] === "activity" ? enums.activity : p.join(".") === "speechStyle.language" ? ["en"] : null,
+    noteFor: (p) => ({ timezone: "IANA, e.g. Europe/London", start: "HH:MM, their time", jitterMin: "± minutes, 0 = exact", lowercase: "0–1", typoRate: "0–1", correctionRate: "0–1", attention: "0–1" })[p[p.length - 1]],
+    openRecord: (p) => p.join(".") === "stats",
+    custom: (p, v) => {
+      if (p.join(".") === "characterId") return h(`<label class="field"><span>characterId</span><input value="${esc(v)}" disabled></label>`);
+      if (p.join(".") !== "platforms") return null;
+      const fs = h(`<fieldset><legend>platforms</legend><p class="muted" style="margin:0 0 6px">The name of the env var holding each bot token. Leave empty to not use that platform.</p></fieldset>`);
+      for (const k of ["telegram", "discord"]) {
+        const s = platforms[k];
+        const el = h(`<input type="text" placeholder="e.g. ${esc(id.toUpperCase())}_${k.toUpperCase()}_TOKEN" value="${esc(v[k]?.botTokenEnv ?? "")}">`);
+        el.oninput = () => { if (el.value.trim()) state.platforms[k] = { botTokenEnv: el.value.trim() }; else delete state.platforms[k]; };
+        const lab = h(`<label class="field" data-path="platforms.${k}"><span>${k}<small>${s ? (s.running ? "running" : s.set ? "token set, restart to start" : "token env var not set") : ""}</small></span></label>`);
+        lab.append(el); fs.append(lab);
+      }
+      return fs;
+    },
+  };
+  const render = () => formBox.replaceChildren(buildForm(state, opts, render));
+  render();
+  page.querySelector("#revert").onclick = () => character(id);
+  page.querySelector("#save").onclick = async () => {
+    const err = page.querySelector("#err"); err.textContent = "";
+    try {
+      const r = await api("PUT", `/api/characters/${encodeURIComponent(id)}`, state);
+      toast(r.restartNeeded ? "Saved. Restart to apply the platform change." : "Saved. Live on the next message.");
+    } catch (e) { showIssues(formBox, err, e); }
+  };
+  $main.replaceChildren(page);
+}
+
+const CONFIG_NOTES = {
+  quietMs: "ms of silence that ends a user turn",
+  maxTurnMs: "ms cap on one turn",
+  maxDelayMs: "ms cap on one reply delay",
+  maxMessages: "most messages in one reply",
+  catchUpMs: "ms: sends overdue by more are dropped at restart",
+  recentMessages: "messages of history per reply",
+  choiceMargin: "× chance a Jev choice must beat",
+  scoreConfidence: "0–1",
+  noulThreshold: "0–1, default yes/no bar",
+  followUpThreshold: "0–1",
+  openThreadThreshold: "0–1",
+  maxExamples: "voice examples per reply",
+  examplePool: "candidates per emotion bucket",
+  minRecentMessages: "floor for the topic-scoped window",
+  unresolvedMax: "open threads kept",
+  unresolvedTtlMs: "ms before an unasked thread expires",
+  summaryMinChunk: "messages out of the window before summarizing",
+  summaryMaxChunk: "messages per summary",
+  maxFacts: "facts per reply",
+  maxSummaries: "notes per reply",
+};
+
+async function settings() {
+  const { config, defaults } = await api("GET", "/api/config");
+  const state = structuredClone(config);
+  const page = h(`<div><h1>Settings</h1>
+    <p class="sub">Engine tuning, shared by every character. Saved to <code>mimic.config.json</code> and live on the next message. Highlighted = not the default.</p>
+    <div id="form"></div>
+    <div class="bar"><button class="primary" id="save">Save</button><button id="defaults">Reset all to defaults</button><span class="errors" id="err"></span></div></div>`);
+  const formBox = page.querySelector("#form");
+  const opts = { noteFor: (p) => `${CONFIG_NOTES[p[p.length - 1]] ?? ""}${CONFIG_NOTES[p[p.length - 1]] ? " · " : ""}default ${getIn(defaults, p)}` };
+  const render = () => {
+    formBox.replaceChildren(buildForm(state, opts, render));
+    formBox.querySelectorAll("label.field").forEach((l) => l.classList.toggle("changed", getIn(config, l.dataset.path.split(".")) !== getIn(defaults, l.dataset.path.split("."))));
+  };
+  render();
+  const save = async (body) => {
+    const err = page.querySelector("#err"); err.textContent = "";
+    try { await api("PUT", "/api/config", body); toast("Saved. Live on the next message."); settings(); }
+    catch (e) { showIssues(formBox, err, e); }
+  };
+  page.querySelector("#save").onclick = () => save(state);
+  page.querySelector("#defaults").onclick = () => confirm("Put every setting back to its default?") && save(defaults);
+  $main.replaceChildren(page);
+}
+
+async function conversations(filter) {
+  const list = (await api("GET", "/api/conversations")).filter((c) => !filter || c.characterId === filter);
+  const page = h(`<div><h1>Conversations</h1><p class="sub">${filter ? `${esc(filter)} · <a href="#/conversations">all</a>` : "Every chat, most recent first"}</p>
+    ${list.length ? `<table><thead><tr><th>Character</th><th>Platform</th><th>Chat</th><th>Topic</th><th>Messages</th><th>Last message</th></tr></thead><tbody>${list.map((c) => `
+      <tr class="link" data-id="${esc(c.id)}"><td>${esc(c.characterId)}</td><td>${esc(c.platform)}</td><td class="muted">${esc(c.chatId)}</td>
+      <td>${esc(c.topic ?? "")}${c.openThreads ? ` <span class="chip">${c.openThreads} open</span>` : ""}</td><td>${c.messages}</td><td>${ago(Math.max(c.lastUserAt, c.lastBotAt))}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted">No conversations yet.</p>`}</div>`);
+  page.querySelectorAll("tr.link").forEach((tr) => (tr.onclick = () => (location.hash = `#/conversations/${encodeURIComponent(tr.dataset.id)}`)));
+  $main.replaceChildren(page);
+}
+
+async function conversation(id) {
+  const c = await api("GET", `/api/conversations/${encodeURIComponent(id)}`);
+  const conv = c.conversation;
+  const item = (text, kind, itemId, extra = "") => `<li><span>${esc(text)}${extra}</span><button class="x" data-kind="${kind}" data-id="${esc(itemId)}" title="Delete">✕</button></li>`;
+  const page = h(`<div>
+    <div class="row" style="justify-content:space-between"><h1>${esc(conv.characterId)} · ${esc(conv.platform)}</h1>
+      <div class="row"><button id="forget">Forget memory</button><button class="danger" id="reset">Reset chat</button></div></div>
+    <p class="sub">chat ${esc(conv.chatId)} · topic ${esc(conv.topic ?? "none")} · version ${conv.version} · last message ${ago(Math.max(conv.lastUserAt, conv.lastBotAt))}</p>
+
+    <h2>Messages</h2>
+    <div class="chat" id="chat">${c.messages.map((m) => `<div class="msg ${m.role}">${esc(m.text)}<time>${when(m.at)}</time></div>`).join("") || `<span class="muted">No messages.</span>`}
+      ${c.pending.map((m) => `<div class="msg bot" style="opacity:.55">${esc(m.text)}<time>queued, due ${when(m.dueAt)}</time></div>`).join("")}</div>
+
+    <h2>Meaning to ask about</h2>
+    ${c.openThreads.length ? `<ul class="items">${c.openThreads.map((t) => item(t.summary, "thread", t.id, ` <span class="muted">· ${ago(t.raisedAt)}</span>`)).join("")}</ul>` : `<p class="muted">Nothing open.</p>`}
+
+    <h2>Facts</h2>
+    ${c.facts.length ? `<ul class="items">${c.facts.map((f) => item(f.text, "memory", f.id)).join("")}</ul>` : `<p class="muted">None yet. Notes are written once messages leave the recent window.</p>`}
+
+    <h2>Notes</h2>
+    ${c.summaries.length ? `<ul class="items">${c.summaries.map((s) => item(s.text, "memory", s.id, ` <span class="muted">· ${when(s.fromAt)}</span>`)).join("")}</ul>` : `<p class="muted">None yet.</p>`}
+
+    <h2>Event log <span class="muted">(latest 100)</span></h2>
+    <div>${c.events.map((e) => `<details><summary><b>${esc(e.type)}</b> <span class="muted">${when(e.at)}</span></summary><pre>${esc(JSON.stringify(e.payload, null, 2))}</pre></details>`).join("")}</div>
+  </div>`);
+  const chat = page.querySelector("#chat");
+  requestAnimationFrame(() => (chat.scrollTop = chat.scrollHeight));
+  page.querySelectorAll("button.x").forEach((b) => (b.onclick = async () => {
+    try {
+      await api("DELETE", b.dataset.kind === "thread" ? `/api/conversations/${encodeURIComponent(id)}/threads/${encodeURIComponent(b.dataset.id)}` : `/api/memories/${encodeURIComponent(b.dataset.id)}`);
+      conversation(id);
+    } catch (e) { toast(e.message); }
+  }));
+  const run = (cmd, question) => async () => {
+    if (!confirm(question)) return;
+    try { toast((await api("POST", `/api/conversations/${encodeURIComponent(id)}/${cmd}`, {})).message); conversation(id); }
+    catch (e) { toast(e.message); }
+  };
+  page.querySelector("#forget").onclick = run("forget", "Delete every fact, note and open thread for this chat? The messages stay.");
+  page.querySelector("#reset").onclick = run("reset", "Reset this chat? Messages, memory and anything queued are deleted, and the character starts over.");
+  $main.replaceChildren(page);
+}
+
+/* ---------- routing ---------- */
+
+async function routeTo() {
+  const [path, query] = location.hash.slice(1).split("?");
+  const parts = path.split("/").filter(Boolean);
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.nav === (parts[0] ?? "")));
+  try {
+    if (!parts.length) await overview();
+    else if (parts[0] === "characters" && parts[1]) await character(decodeURIComponent(parts[1]));
+    else if (parts[0] === "characters") await characters();
+    else if (parts[0] === "conversations" && parts[1]) await conversation(decodeURIComponent(parts[1]));
+    else if (parts[0] === "conversations") await conversations(new URLSearchParams(query).get("c"));
+    else if (parts[0] === "settings") await settings();
+    else location.hash = "#/";
+  } catch (e) {
+    $main.replaceChildren(h(`<div><h1>Something went wrong</h1><p class="errors">${esc(e.message)}</p></div>`));
+  }
+}
+addEventListener("hashchange", routeTo);
+routeTo();
+</script>
+</body>
+</html>

@@ -29,9 +29,51 @@ export class InteractionManager {
     this.enqueue(conv.conversationId, () => this.onUserMessage(conv.conversationId, m.platformMessageId, text));
   }
 
+  /**
+   * Run `job` in the conversation's serial queue and hand back its result. Anything outside the
+   * reply path that writes conversation state (the dashboard) goes through here, or a reply that
+   * read the row before it would save over the change.
+   */
+  run<T>(conversationId: string, job: () => T): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      void this.enqueue(conversationId, () => {
+        try {
+          resolve(job());
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+  }
+
+  /** A chat command, from somewhere other than the chat (the dashboard). Returns its reply text. */
+  command(conversationId: string, name: CommandName): Promise<string> {
+    return this.run(conversationId, () => {
+      if (name === "reset") this.stopTyping(conversationId);
+      return runCommand(this.deps, conversationId, name);
+    });
+  }
+
   /** Resolves when every queued job (including ones they enqueue) has finished. */
   async drain() {
     while (this.inFlight.size) await Promise.all([...this.inFlight]);
+  }
+
+  /**
+   * Whether this process can deliver to a conversation. Measured: `npm run cli` against the live DB
+   * armed a Telegram follow-up and had Jev decide it, with no Telegram adapter to send through. A
+   * process leaves alone every conversation on a platform it is not running; that platform's own
+   * process handles them when it boots.
+   */
+  private serves(conversationId: string): boolean {
+    const conv = this.deps.store.getConversation(conversationId);
+    if (!conv) return false;
+    try {
+      this.delivery(conv.characterId, conv.platform);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Boot: settle messages stuck in `sending`, drop sends overdue past catch-up, arm timers. */
@@ -39,12 +81,12 @@ export class InteractionManager {
     const { store, clock, config } = this.deps;
     const now = clock.now();
     // through the queue, not beside it: a resend must not interleave with messages already arriving
-    for (const msg of store.botMessagesWithStatus("sending")) {
+    for (const msg of store.botMessagesWithStatus("sending").filter((m) => this.serves(m.conversationId))) {
       await this.enqueue(msg.conversationId, () => this.settleSending(msg));
     }
     store.tx(() => {
       // held sends whose turn's handler died: their action row is gone, so nothing would ever re-arm them
-      for (const msg of store.scheduledBotMessagesWithoutAction()) {
+      for (const msg of store.scheduledBotMessagesWithoutAction().filter((m) => this.serves(m.conversationId))) {
         const conv = store.getConversation(msg.conversationId);
         const reason = !conv || msg.conversationVersion !== conv.version ? "stale_version" : msg.dueAt < now - config.catchUpMs ? "overdue_at_restart" : null;
         if (reason) {
@@ -57,7 +99,7 @@ export class InteractionManager {
     });
     store.tx(() => {
       for (const row of store.allActions()) {
-        if (row.kind !== "send_message" || row.dueAt >= now - config.catchUpMs) continue;
+        if (row.kind !== "send_message" || row.dueAt >= now - config.catchUpMs || !this.serves(row.conversationId)) continue;
         store.deleteAction(row.id);
         const msg = store.getBotMessage(row.id);
         if (!msg) continue;
@@ -65,7 +107,7 @@ export class InteractionManager {
         store.appendEvent(row.conversationId, now, "OUTGOING_MESSAGE_CANCELLED", { messageId: row.id, reason: "overdue_at_restart" });
       }
     });
-    this.scheduler.armAll();
+    this.scheduler.armAll((row) => this.serves(row.conversationId));
   }
 
   /**
@@ -75,7 +117,7 @@ export class InteractionManager {
    */
   onActivityChanged(characterId: string) {
     for (const conv of this.deps.store.conversationsForCharacter(characterId)) {
-      if (!this.deps.store.pendingBotMessages(conv.conversationId).length) continue;
+      if (!this.serves(conv.conversationId) || !this.deps.store.pendingBotMessages(conv.conversationId).length) continue;
       void this.enqueue(conv.conversationId, () => respond(this.deps, conv.conversationId, "activity_changed", null));
     }
   }
