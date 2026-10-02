@@ -99,3 +99,57 @@ export function nextOpenThreads(
   }
   return kept.slice(-config.unresolvedMax);
 }
+
+/**
+ * Relationship and user behaviour (doc 06 §2.25, §2.26), derived from the messages alone and never
+ * stored: how long they have known each other, and how this person texts.
+ */
+export interface Acquaintance {
+  firstAt: number | null;
+  theirMessages: number;
+  avgChars: number | null;
+  medianReplyMs: number | null;
+}
+
+/** A gap longer than this is someone coming back, not someone replying. */
+const SESSION_GAP_MS = 6 * 3_600_000;
+/** Below this many of their messages, a "usual" is one bad sample. */
+const MIN_PATTERN = 10;
+
+export function acquaintanceFrom(firstAt: number | null, theirMessages: number, sample: HistoryMessage[]): Acquaintance {
+  const theirs = sample.filter((m) => m.role === "user");
+  const gaps = sample.flatMap((m, i) => {
+    const prev = sample[i - 1];
+    const gap = prev && m.role === "user" && prev.role === "bot" ? m.at - prev.at : -1;
+    return gap >= 0 && gap < SESSION_GAP_MS ? [gap] : [];
+  });
+  const enough = theirs.length >= MIN_PATTERN;
+  return {
+    firstAt,
+    theirMessages,
+    avgChars: enough ? Math.round(theirs.reduce((n, m) => n + m.text.length, 0) / theirs.length) : null,
+    medianReplyMs: enough && gaps.length >= 3 ? gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : null,
+  };
+}
+
+function duration(ms: number): string {
+  const day = 86_400_000;
+  if (ms < day) return "since today";
+  if (ms < 14 * day) return `for ${Math.round(ms / day)} day(s)`;
+  if (ms < 60 * day) return `for ${Math.round(ms / (7 * day))} weeks`;
+  return `for ${Math.round(ms / (30 * day))} months`;
+}
+
+/** Prompt lines. Says nothing it cannot back with a number. */
+export function describeAcquaintance(a: Acquaintance, now: number): string[] {
+  const lines = [
+    a.theirMessages <= 3 || a.firstAt === null
+      ? "You have barely talked to this person before; you are still getting to know them."
+      : `You have been texting this person ${duration(now - a.firstAt)}; they have sent you ${a.theirMessages} messages.`,
+  ];
+  const how: string[] = [];
+  if (a.avgChars !== null) how.push(a.avgChars < 25 ? "short, quick messages" : a.avgChars > 120 ? "long messages" : "medium-length messages");
+  if (a.medianReplyMs !== null) how.push(a.medianReplyMs < 60_000 ? "usually reply within a minute" : a.medianReplyMs > 30 * 60_000 ? "usually take their time to reply" : "reply at an ordinary pace");
+  if (how.length) lines.push(`They tend to write ${how.join(", and ")}.`);
+  return lines;
+}

@@ -5,7 +5,7 @@ import { applyStyle, humanize, styleFor, type MessageStyle } from "../character/
 import type { CharacterProfile } from "../character/profile.ts";
 import type { Clock } from "../clock.ts";
 import type { Config } from "../config.ts";
-import { contextWindow, nextOpenThreads, openThreads, selectExamples } from "../context/context.ts";
+import { acquaintanceFrom, contextWindow, describeAcquaintance, nextOpenThreads, openThreads, selectExamples } from "../context/context.ts";
 import type { JevAnswers, JevClient } from "../jev/client.ts";
 import { decide } from "../jev/decide.ts";
 import { buildQuestions } from "../jev/questions.ts";
@@ -74,6 +74,8 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
   const texts = turn?.texts ?? [];
   // pruned and capped here, so Jev sees the same list the turn will act on
   const open = openThreads(conv.unresolved, now, config);
+  const stats = store.userMessageStats(conversationId);
+  const them = acquaintanceFrom(stats.firstAt, stats.count, store.recentMessages(conversationId, 100));
 
   let answers: JevAnswers | null = null;
   try {
@@ -94,6 +96,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
       recent,
       pending,
       openThreads: open,
+      them,
     });
     answers = await d.jev.ask(state, buildQuestions(trigger, pending, open));
   } catch (e) {
@@ -139,6 +142,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
       buildPrompt({
         profile, decision, trigger, activity, mood, localTime, topic: conv.topic, recent, turn: texts,
         keptPending: kept.map((m) => m.text), styles, examples, askAbout: asking.map((t) => t.summary),
+        them: describeAcquaintance(them, now),
       }),
       // hashed: the provider gets a stable per-conversation routing key, not the user's platform chat id
       { sessionId: createHash("sha256").update(conversationId).digest("hex").slice(0, 32) },

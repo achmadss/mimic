@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import { contextWindow, nextOpenThreads, openThreads, selectExamples } from "../src/context/context.ts";
+import { acquaintanceFrom, contextWindow, describeAcquaintance, nextOpenThreads, openThreads, selectExamples, type HistoryMessage } from "../src/context/context.ts";
 import type { Example, UnresolvedItem } from "../src/types.ts";
 
 const config = DEFAULT_CONFIG;
@@ -92,4 +92,24 @@ test("nextOpenThreads consumes an asked thread and stores a raised one", () => {
   const capped = nextOpenThreads(many, { asked: [], raised: null }, now, config);
   assert.equal(capped.length, config.unresolvedMax);
   assert.equal(capped.at(-1)!.id, `t${config.unresolvedMax + 1}`);
+});
+
+test("acquaintance: a stranger, then a pattern only once there is enough to call it one", () => {
+  const now = 100 * 86_400_000;
+  const stranger = acquaintanceFrom(now - 60_000, 2, [{ role: "user", text: "hi", at: now - 60_000 }]);
+  assert.deepEqual(stranger, { firstAt: now - 60_000, theirMessages: 2, avgChars: null, medianReplyMs: null });
+  assert.match(describeAcquaintance(stranger, now).join(" "), /barely talked/);
+  assert.equal(describeAcquaintance(stranger, now).length, 1, "no pattern line from two messages");
+
+  // ten exchanges: bot, then the user 20 s later; one 8 h gap is a return, not a reply
+  const sample: HistoryMessage[] = Array.from({ length: 10 }, (_, i) => [
+    { role: "bot" as const, text: "so what", at: now - (20 - i) * 3_600_000 },
+    { role: "user" as const, text: "lol yeah", at: now - (20 - i) * 3_600_000 + (i === 0 ? 8 * 3_600_000 : 20_000) },
+  ]).flat();
+  const regular = acquaintanceFrom(now - 21 * 86_400_000, 300, sample);
+  assert.equal(regular.avgChars, 8);
+  assert.equal(regular.medianReplyMs, 20_000);
+  const text = describeAcquaintance(regular, now).join(" ");
+  assert.match(text, /for 3 weeks; they have sent you 300 messages/);
+  assert.match(text, /short, quick messages, and usually reply within a minute/);
 });

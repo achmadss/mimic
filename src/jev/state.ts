@@ -1,5 +1,6 @@
 import { availability, interruptibility } from "../character/derived.ts";
 import type { CharacterProfile } from "../character/profile.ts";
+import type { Acquaintance } from "../context/context.ts";
 import type { Activity, Mood, Trigger, UnresolvedItem } from "../types.ts";
 
 export interface JevStateInput {
@@ -21,6 +22,7 @@ export interface JevStateInput {
   pending: { id: string; text: string; dueAt: number }[];
   /** Already pruned and capped: the threads nothing has asked about yet (doc 05 §6). */
   openThreads: UnresolvedItem[];
+  them: Acquaintance;
 }
 
 /**
@@ -62,5 +64,12 @@ export function buildJevState(i: JevStateInput) {
     pendingBots: i.pending.map((m) => ({ id: m.id, text: m.text, dueInMs: m.dueAt - i.now })),
     // summaries, never raw rows (doc 04 §1)
     unresolved: i.openThreads.map((t) => ({ id: t.id, summary: t.summary })),
+    // derived from the messages, never stored (doc 02 §5); null where there is too little to say
+    them: {
+      knownForMs: i.them.firstAt === null ? 0 : i.now - i.them.firstAt,
+      messagesFromThem: i.them.theirMessages,
+      avgChars: i.them.avgChars,
+      medianReplyMs: i.them.medianReplyMs,
+    },
   };
 }

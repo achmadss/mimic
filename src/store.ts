@@ -168,6 +168,14 @@ export class Store {
       .all(conversationId, before, since, limit) as { role: "user" | "bot"; text: string; at: number }[];
   }
 
+  /** When they first wrote, and how many messages they have sent in all. */
+  userMessageStats(conversationId: string): { firstAt: number | null; count: number } {
+    const r = this.db
+      .prepare("SELECT MIN(at) AS firstAt, COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'user'")
+      .get(conversationId) as Row;
+    return { firstAt: r.firstAt ?? null, count: r.n };
+  }
+
   insertBotMessage(m: BotMessage) {
     this.db
       .prepare(

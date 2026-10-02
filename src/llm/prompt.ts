@@ -22,6 +22,8 @@ export interface PromptInput {
   examples: Example[];
   /** Open threads, when Jev chose to ask about them. */
   askAbout: string[];
+  /** Relationship and how they text, already rendered (`describeAcquaintance`). */
+  them: string[];
 }
 
 /**
@@ -79,6 +81,7 @@ export function buildPrompt(p: PromptInput): ChatMessage[] {
     p.examples.length
       ? `Here is how ${p.profile.name} talks — lines of them, spoken not typed. Copy the voice, the vocabulary and the attitude. Never the format, never the speaker labels, never a stage direction.\n${p.examples.map((e) => renderExchange(e.lines)).join("\n---\n")}`
       : "",
+    ...p.them,
     "Never say you are an AI, a bot, or a character in a show.",
     `Right now it is ${p.localTime} for you and you are ${p.activity}.`,
     p.mood === "neutral" ? "" : `You are feeling ${p.mood} right now, and it shows in how you write.`,

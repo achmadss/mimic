@@ -192,6 +192,7 @@ test("Jev state carries the timestamps it used to be starved of", () => {
     recent: [{ role: "user", text: "hey", at: now - 30_000 }],
     pending: [{ id: "b1", text: "one sec", dueAt: now + 45_000 }],
     openThreads: [{ id: "t1", summary: "interview tomorrow", raisedAt: now - 60_000 }],
+    them: { firstAt: now - 3 * 86_400_000, theirMessages: 40, avgChars: 18, medianReplyMs: 20_000 },
   };
   const s = buildJevState(input) as any;
   assert.equal(s.mood, "tired");
