@@ -9,7 +9,6 @@ import type { RoutineEngine } from "../character/routine-engine.ts";
 import type { Clock } from "../clock.ts";
 import { applyConfig, ConfigOverridesSchema, DEFAULT_CONFIG, writeConfigFile, type Config } from "../config.ts";
 import { BOT_PLATFORMS, type AdapterRegistry, type BotPlatform } from "../delivery/registry.ts";
-import { setEnvVar } from "../envfile.ts";
 import type { InteractionManager } from "../im/manager.ts";
 import { openThreads } from "../context/context.ts";
 import type { Store } from "../store.ts";
@@ -20,7 +19,8 @@ import { ACTIVITIES, PACES } from "../types.ts";
  * next turn — profiles and config are shared objects the reply path reads every time.
  *
  * Bot tokens and platform bindings are live too: a change re-syncs that character's adapters.
- * So are LLM and Jev keys and models: the reply path resolves them from `env` on every call.
+ * So are LLM and Jev keys and models: the reply path reads them from the store on every call.
+ * Keys, tokens and models are stored in the database (`settings`), never in .env.
  */
 export interface DashboardDeps {
   store: Store;
@@ -32,9 +32,6 @@ export interface DashboardDeps {
   configPath: string;
   charactersDir: string;
   adapters: AdapterRegistry;
-  /** The dotenv file bot tokens, keys and models are written to. */
-  envPath: string;
-  env: NodeJS.ProcessEnv;
 }
 
 export interface DashboardOptions {
@@ -71,6 +68,7 @@ function validProfile(body: unknown): CharacterProfile {
   return parsed.data;
 }
 
+const get = (d: DashboardDeps) => (name: string) => d.store.setting(name);
 const platformsOf = (p: CharacterProfile, d: DashboardDeps) => d.adapters.status(p);
 
 /** Two characters on one token would overwrite each other's conversations: refuse it at the edge. */
@@ -123,7 +121,7 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
   if (method === "GET" && (m = path.match(/^\/api\/characters\/([a-z0-9_]+)$/))) {
     const p = d.profiles.get(m[1]);
     if (!p) throw new HttpError(404, "no such character");
-    return { profile: p, platforms: platformsOf(p, d), ai: aiStatus(d.env, p.characterId) };
+    return { profile: p, platforms: platformsOf(p, d), ai: aiStatus(get(d), p.characterId) };
   }
 
   if (method === "PUT" && (m = path.match(/^\/api\/characters\/([a-z0-9_]+)$/))) {
@@ -154,15 +152,11 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
       for (const other of d.profiles.values()) {
         for (const k of BOT_PLATFORMS) {
           const name = other.platforms[k]?.botTokenEnv;
-          if (name && name !== envName && d.env[name] === token.trim()) throw new HttpError(409, `that token is already ${other.name}'s ${k} bot`);
+          if (name && name !== envName && d.store.setting(name) === token.trim()) throw new HttpError(409, `that token is already ${other.name}'s ${k} bot`);
         }
       }
     }
-    try {
-      setEnvVar(d.envPath, d.env, envName, typeof token === "string" ? token.trim() : null);
-    } catch (e) {
-      throw new HttpError(400, (e as Error).message);
-    }
+    d.store.setSetting(envName, typeof token === "string" ? token.trim() : null);
     await d.adapters.sync(p.characterId, p);
     return { ok: true, platform: platformsOf(p, d)[platform] };
   }
@@ -184,7 +178,7 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
     return { ok: true };
   }
 
-  if (method === "GET" && path === "/api/config") return { config: d.config, defaults: DEFAULT_CONFIG, ai: aiStatus(d.env, null) };
+  if (method === "GET" && path === "/api/config") return { config: d.config, defaults: DEFAULT_CONFIG, ai: aiStatus(get(d), null) };
 
   // keys and models: `default` is the global value, a character id is that character's override
   if ((m = path.match(/^\/api\/ai\/([a-z0-9_]+)(\/.*)?$/))) {
@@ -193,8 +187,8 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
     const rest = m[2] ?? "";
 
     if (method === "GET" && rest === "/models") {
-      const { baseUrl, apiKey } = llmEndpoint(d.env, characterId);
-      if (!baseUrl) return { models: [] };
+      const { baseUrl, apiKey } = llmEndpoint(get(d), characterId);
+      if (!baseUrl || !apiKey) return { models: [], missing: !baseUrl ? "base URL" : "API key" };
       try {
         const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/models`, {
           headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
@@ -215,11 +209,11 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
       const value = typeof raw === "string" ? raw.trim() : null;
       try {
         if (value !== null) checkAiValue(v, value);
-        setEnvVar(d.envPath, d.env, aiVarName(characterId, v), value);
       } catch (e) {
         throw new HttpError(400, (e as Error).message);
       }
-      return { ok: true, ai: aiStatus(d.env, characterId) };
+      d.store.setSetting(aiVarName(characterId, v), value);
+      return { ok: true, ai: aiStatus(get(d), characterId) };
     }
   }
 

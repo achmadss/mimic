@@ -6,8 +6,8 @@ export const BOT_PLATFORMS = ["telegram", "discord"] as const;
 export type BotPlatform = (typeof BOT_PLATFORMS)[number];
 
 export interface PlatformStatus {
-  /** The env var the profile names for this platform's token. */
-  env: string;
+  /** The setting the token is stored under: the profile's `botTokenEnv`. */
+  name: string;
   tokenSet: boolean;
   /** The last 4 characters, so you can tell two tokens apart without seeing either. */
   tokenHint: string | null;
@@ -19,7 +19,8 @@ export interface PlatformStatus {
 export interface RegistryOptions {
   /** Which platforms this process may start. Empty in CLI mode: a test run must not go live. */
   allowed: readonly BotPlatform[];
-  env: NodeJS.ProcessEnv;
+  /** Reads a stored token by name. */
+  secret: (name: string) => string | undefined;
   create: (platform: BotPlatform, token: string) => DeliveryAdapter;
   receive: (characterId: string, platform: Platform, m: IncomingText) => void;
   /** After an adapter is listening: arm its conversations' timers, mirror presence. */
@@ -76,7 +77,7 @@ export class AdapterRegistry {
     for (const platform of BOT_PLATFORMS) {
       const k = key(characterId, platform);
       const binding = profile?.platforms[platform];
-      const want = binding && this.o.allowed.includes(platform) ? this.o.env[binding.botTokenEnv] || null : null;
+      const want = binding && this.o.allowed.includes(platform) ? this.o.secret(binding.botTokenEnv) || null : null;
       const cur = this.live.get(k);
       if (cur && cur.token === want) continue;
       if (cur) {
@@ -111,10 +112,10 @@ export class AdapterRegistry {
     for (const platform of BOT_PLATFORMS) {
       const binding = profile.platforms[platform];
       if (!binding) continue;
-      const token = this.o.env[binding.botTokenEnv];
+      const token = this.o.secret(binding.botTokenEnv);
       const k = key(profile.characterId, platform);
       out[platform] = {
-        env: binding.botTokenEnv,
+        name: binding.botTokenEnv,
         tokenSet: Boolean(token),
         tokenHint: token ? `…${token.slice(-4)}` : null,
         running: this.live.has(k),

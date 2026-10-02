@@ -231,7 +231,7 @@ async function overview() {
         <div>${esc(c.activity)} <span class="muted">for ${ago(c.activitySince).replace(" ago", "")}</span></div>
         <div class="muted">${esc(c.localTime)} their time${c.mood !== "neutral" ? ` · feeling ${esc(c.mood)}` : ""}</div>
         <div class="row" style="margin-top:10px">${Object.entries(c.platforms).map(([p, s]) =>
-          `<span class="chip ${platformTone(s)}" title="${esc(s.error ?? s.env)}">${esc(p)}: ${esc(platformWord(s))}</span>`).join("") || `<span class="chip">no bots</span>`}</div>
+          `<span class="chip ${platformTone(s)}" title="${esc(s.error ?? s.name)}">${esc(p)}: ${esc(platformWord(s))}</span>`).join("") || `<span class="chip">no bots</span>`}</div>
         <div class="muted" style="margin-top:8px"><a href="#/conversations?c=${esc(c.id)}">${c.conversations} conversation(s)</a></div>
       </div>`).join("")}
     </div></div>`));
@@ -258,26 +258,22 @@ async function characters() {
   $main.replaceChildren(page);
 }
 
-/** One platform's binding: the env var name (part of the profile), and the token (in .env). */
+/** One platform's bot token, stored in the database under the profile's `botTokenEnv` name. */
 function tokenPanel(id, k, state, platforms) {
   const s = platforms[k];
   const box = h(`<div style="border-top:1px solid var(--line);padding-top:8px;margin-top:8px">
     <div class="row" style="justify-content:space-between"><b>${k}</b>
       <span class="chip ${s ? platformTone(s) : ""}">${s ? esc(platformWord(s)) : "off"}</span></div>
     ${s?.error ? `<div class="errors" style="font-size:13px">${esc(s.error)}</div>` : ""}
-    <label class="field" data-path="platforms.${k}"><span>token env var<small>empty = off</small></span>
-      <input type="text" class="env" placeholder="${esc(id.toUpperCase())}_${k.toUpperCase()}_TOKEN" value="${esc(state.platforms[k]?.botTokenEnv ?? "")}"></label>
-    <label class="field"><span>token<small>${s?.tokenSet ? `set, ends ${esc(s.tokenHint)}` : "not set"}</small></span>
+    <label class="field" data-path="platforms.${k}"><span>token<small>${s?.tokenSet ? `set, ends ${esc(s.tokenHint)}` : "not set"}</small></span>
       <div class="row" style="flex-wrap:nowrap"><input type="password" class="tok" autocomplete="off" placeholder="${s?.tokenSet ? "paste a new token to replace it" : "paste the bot token"}">
       <button type="button" class="primary set">Save token</button>${s?.tokenSet ? `<button type="button" class="danger clear">Remove</button>` : ""}</div></label>
   </div>`);
-  const env = box.querySelector(".env");
-  env.oninput = () => { if (env.value.trim()) state.platforms[k] = { botTokenEnv: env.value.trim() }; else delete state.platforms[k]; };
   const put = async (token) => {
     try {
       const r = await api("PUT", `/api/characters/${encodeURIComponent(id)}/platforms/${k}`, { token });
       // the server may have created the binding; keep the form in step without losing other edits
-      state.platforms[k] = { botTokenEnv: r.platform.env };
+      state.platforms[k] = { botTokenEnv: r.platform.name };
       platforms[k] = r.platform;
       box.replaceWith(tokenPanel(id, k, state, platforms));
       toast(r.platform.running ? `${k} is live.` : r.platform.error ? `Saved, but ${k} did not start: ${r.platform.error}` : token ? "Saved." : "Token removed; the bot is stopped.");
@@ -291,7 +287,7 @@ function tokenPanel(id, k, state, platforms) {
 
 const AI_NOTES = {
   LLM_BASE_URL: "OpenAI-compatible API, e.g. https://opencode.ai/zen/go/v1",
-  LLM_MODEL: "the model that writes replies and notes",
+  LLM_MODEL: "writes replies and notes; listed once the key is saved",
   LLM_API_KEY: "key for that API",
   LLM_STRUCTURED_MODE: "tool is safest; json_schema only if verified for the model",
   TYPESAFE_API_KEY: "Jev, which decides when and how they reply",
@@ -301,33 +297,57 @@ const AI_NOTES = {
 function aiPanel(scope, ai) {
   const own = scope !== "default";
   const fs = h(`<fieldset><legend>${own ? "model &amp; keys" : "default model &amp; keys"}</legend>
-    <p class="muted" style="margin:0 0 6px">${own ? "Leave one unset to use the default from Settings." : "Used by every character that does not set its own."} Stored in <code>.env</code>, live on the next message; keys are never shown.</p>
-    <datalist id="models-${esc(scope)}"></datalist></fieldset>`);
+    <p class="muted" style="margin:0 0 6px">${own ? "Leave one unset to use the default from Settings." : "Used by every character that does not set its own."} Stored in the database, live on the next message; keys are never shown.</p></fieldset>`);
+  const put = async (v, value) => {
+    try {
+      const r = await api("PUT", `/api/ai/${encodeURIComponent(scope)}/${v}`, { value });
+      fs.replaceWith(aiPanel(scope, r.ai));
+      toast(value === null ? `${v.toLowerCase().replaceAll("_", " ")} unset.` : "Saved. Live on the next message.");
+    } catch (e) { toast(e.message); }
+  };
   for (const [v, s] of Object.entries(ai)) {
     const hint = s.own ? (s.secret ? `set, ends ${s.own}` : "set") : s.effective ? `default: ${s.effective}` : "not set";
-    const field = v === "LLM_STRUCTURED_MODE"
+    const field = v === "LLM_MODEL"
+      ? `<select class="val" disabled><option>loading models…</option></select>`
+      : v === "LLM_STRUCTURED_MODE"
       ? `<select class="val"><option value="">${own ? "use default" : "tool (built-in default)"}</option>${["tool", "json_object", "json_schema"].map((o) => `<option ${s.own === o ? "selected" : ""}>${o}</option>`).join("")}</select>`
-      : `<input class="val" type="${s.secret ? "password" : "text"}" autocomplete="off" ${v === "LLM_MODEL" ? `list="models-${esc(scope)}"` : ""}
+      : `<input class="val" type="${s.secret ? "password" : "text"}" autocomplete="off"
           value="${s.secret ? "" : esc(s.own ?? "")}" placeholder="${esc(s.secret ? (s.own ? "paste a new key to replace it" : "paste the key") : s.effective ?? "")}">`;
     const row = h(`<label class="field"><span>${esc(v.toLowerCase().replaceAll("_", " "))}<small>${esc(AI_NOTES[v])}</small><small><code>${esc(s.name)}</code> · ${esc(hint)}</small></span>
-      <div class="row" style="flex-wrap:nowrap">${field}<button type="button" class="primary set">Save</button>${s.own ? `<button type="button" class="${s.secret ? "danger" : ""} clear">${own ? "Use default" : "Unset"}</button>` : ""}</div></label>`);
-    const put = async (value) => {
-      try {
-        const r = await api("PUT", `/api/ai/${encodeURIComponent(scope)}/${v}`, { value });
-        fs.replaceWith(aiPanel(scope, r.ai));
-        toast(value === null ? `${v} unset.` : "Saved. Live on the next message.");
-      } catch (e) { toast(e.message); }
-    };
-    row.querySelector(".set").onclick = () => { const x = row.querySelector(".val").value.trim(); x ? put(x) : s.own ? put(null) : toast("Enter a value first."); };
+      <div class="row" style="flex-wrap:nowrap">${field}${v === "LLM_MODEL" ? "" : `<button type="button" class="primary set">Save</button>`}${s.own && v !== "LLM_MODEL" ? `<button type="button" class="${s.secret ? "danger" : ""} clear">${own ? "Use default" : "Unset"}</button>` : ""}</div></label>`);
+    const set = row.querySelector(".set");
+    if (set) set.onclick = () => { const x = row.querySelector(".val").value.trim(); x ? put(v, x) : s.own ? put(v, null) : toast("Enter a value first."); };
     const clear = row.querySelector(".clear");
-    if (clear) clear.onclick = () => ((own && !s.secret) || confirm(own ? `Remove ${s.name}?` : `Unset ${s.name}? Characters without their own go quiet.`)) && put(null);
+    if (clear) clear.onclick = () => ((own && !s.secret) || confirm(own ? `Remove ${s.name}?` : `Unset ${s.name}? Characters without their own go quiet.`)) && put(v, null);
+    if (v === "LLM_MODEL") modelPicker(scope, s, row, (x) => put(v, x));
     fs.append(row);
   }
-  // fill the model picker from the provider, when the base URL and key allow it
-  api("GET", `/api/ai/${encodeURIComponent(scope)}/models`).then((r) => {
-    fs.querySelector("datalist").replaceChildren(...r.models.map((id) => Object.assign(document.createElement("option"), { value: id })));
-  }).catch(() => {});
   return fs;
+}
+
+/** The model is picked from what the provider lists, so it needs the base URL and key saved first. */
+async function modelPicker(scope, s, row, save) {
+  const own = scope !== "default";
+  const box = row.querySelector(".row");
+  const note = (text) => row.querySelector("span").append(Object.assign(document.createElement("small"), { className: "errors", textContent: text }));
+  let r;
+  try { r = await api("GET", `/api/ai/${encodeURIComponent(scope)}/models`); } catch (e) { r = { models: [], error: e.message }; }
+  if (r.missing) {
+    box.replaceChildren(h(`<select disabled><option>save the ${esc(r.missing)} first to list models</option></select>`));
+    return;
+  }
+  if (!r.models.length) {
+    // the provider would not list them: type the model id instead
+    if (r.error) note(`could not list models: ${r.error}`);
+    box.replaceChildren(h(`<input class="val" type="text" value="${esc(s.own ?? "")}" placeholder="${esc(s.effective ?? "model id")}">`), h(`<button type="button" class="primary">Save</button>`));
+    box.querySelector("button").onclick = () => save(box.querySelector("input").value.trim() || null);
+    return;
+  }
+  const models = s.own && !r.models.includes(s.own) ? [s.own, ...r.models] : r.models;
+  const first = own ? `<option value="">use default${s.effective && !s.own ? ` (${esc(s.effective)})` : ""}</option>` : s.own ? "" : `<option value="">pick a model…</option>`;
+  const sel = h(`<select class="val">${first}${models.map((m) => `<option ${m === s.own ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>`);
+  sel.onchange = () => save(sel.value || null);
+  box.replaceChildren(sel);
 }
 
 async function character(id) {
@@ -348,7 +368,7 @@ async function character(id) {
     custom: (p, v) => {
       if (p.join(".") === "characterId") return h(`<label class="field"><span>characterId</span><input value="${esc(v)}" disabled></label>`);
       if (p.join(".") !== "platforms") return null;
-      const fs = h(`<fieldset><legend>platforms</legend><p class="muted" style="margin:0 0 6px">Give a character a token on both to have them on both. Changes go live straight away; tokens are stored in <code>.env</code> and never shown.</p></fieldset>`);
+      const fs = h(`<fieldset><legend>platforms</legend><p class="muted" style="margin:0 0 6px">Give a character a token on both to have them on both. Changes go live straight away; tokens are stored in the database and never shown.</p></fieldset>`);
       for (const k of ["telegram", "discord"]) fs.append(tokenPanel(id, k, state, platforms));
       return fs;
     },

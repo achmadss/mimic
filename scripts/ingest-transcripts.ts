@@ -67,8 +67,9 @@ async function main() {
     return;
   }
 
-  const apiKey = process.env.TYPESAFE_API_KEY;
-  if (!apiKey) throw new Error("missing env TYPESAFE_API_KEY");
+  // the key the bot uses (set in the dashboard); env still works for a one-off run
+  const apiKey = process.env.TYPESAFE_API_KEY || store.setting("TYPESAFE_API_KEY");
+  if (!apiKey) throw new Error("no TYPESAFE_API_KEY: set it in the dashboard (Settings), or in env for this run");
   const jev = httpJevClient({ apiKey, timeoutMs: 30_000 });
 
   const batches: Exchange[][] = [];

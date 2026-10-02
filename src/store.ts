@@ -383,4 +383,14 @@ export class Store {
   allActions(): ActionRow[] {
     return (this.db.prepare("SELECT * FROM actions ORDER BY due_at, rowid").all() as Row[]).map(toAction);
   }
+
+  setting(name: string): string | undefined {
+    return (this.db.prepare("SELECT value FROM settings WHERE name = ?").get(name) as { value: string } | undefined)?.value;
+  }
+
+  /** `null` removes it. */
+  setSetting(name: string, value: string | null) {
+    if (value === null) this.db.prepare("DELETE FROM settings WHERE name = ?").run(name);
+    else this.db.prepare("INSERT INTO settings (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value").run(name, value);
+  }
 }

@@ -6,8 +6,10 @@ services:
     ports:
       # the dashboard, on this machine only
       - "127.0.0.1:8787:8787"
+    # app settings only; keys, tokens and models are set in the dashboard and kept in data/
+    env_file:
+      - path: .env
+        required: false
     volumes:
-      # create .env before the first `up`: a missing file gets mounted as an empty directory
-      - ./.env:/app/.env
       - ./characters:/app/characters
       - ./data:/app/data

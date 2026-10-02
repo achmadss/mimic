@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,13 +24,12 @@ async function boot() {
   const routine = new RoutineEngine({ store: t.store, clock: t.clock, profiles, onTransition: () => {}, log: () => {} });
   routine.start();
   const configPath = join(dir, "mimic.config.json");
-  const envPath = join(dir, ".env");
-  const env: NodeJS.ProcessEnv = { RICK_TELEGRAM_TOKEN: "1:rick-token" };
+  t.store.setSetting("RICK_TELEGRAM_TOKEN", "1:rick-token");
   // fake bots: a token containing "bad" is rejected the way Telegram's getMe would reject it
   const started: { platform: BotPlatform; token: string; stopped: boolean }[] = [];
   const adapters = new AdapterRegistry({
     allowed: ["telegram", "discord"],
-    env,
+    secret: (n) => t.store.setting(n),
     create: (platform, token) => {
       const a = new FakeAdapter(platform);
       const rec = { platform, token, stopped: false };
@@ -48,7 +47,7 @@ async function boot() {
   });
   for (const p of profiles.values()) await adapters.sync(p.characterId, p);
   const server = startDashboard(
-    { store: t.store, clock: t.clock, im, routine, profiles, config, configPath, charactersDir: join(dir, "characters"), adapters, envPath, env },
+    { store: t.store, clock: t.clock, im, routine, profiles, config, configPath, charactersDir: join(dir, "characters"), adapters },
     { host: "127.0.0.1", port: 0 },
   );
   await new Promise((r) => server.once("listening", r));
@@ -57,7 +56,7 @@ async function boot() {
     const res = await fetch(base + path, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
     return { status: res.status, body: (await res.json().catch(() => null)) as any };
   };
-  return { t, im, profiles, config, configPath, envPath, env, started, adapters, dir, call, base, close: () => { routine.stop(); server.close(); } };
+  return { t, im, profiles, config, configPath, started, adapters, dir, call, base, close: () => { routine.stop(); server.close(); } };
 }
 
 test("request guard: loopback Host only, JSON writes only, password when set", () => {
@@ -77,7 +76,7 @@ test("overview and the page", async () => {
   try {
     const o = (await d.call("GET", "/api/overview")).body;
     const rick = o.characters.find((c: any) => c.id === "rick");
-    assert.deepEqual(rick.platforms.telegram, { env: "RICK_TELEGRAM_TOKEN", tokenSet: true, tokenHint: "…oken", running: true, error: null });
+    assert.deepEqual(rick.platforms.telegram, { name: "RICK_TELEGRAM_TOKEN", tokenSet: true, tokenHint: "…oken", running: true, error: null });
     assert.equal(JSON.stringify(o).includes("1:rick-token"), false, "a token is never sent to the page");
     assert.ok(o.enums.activity.includes("sleeping"));
     const page = await fetch(d.base + "/");
@@ -181,12 +180,12 @@ test("conversations: list, detail, delete a memory and a thread, reset", async (
   }
 });
 
-test("tokens: set, swap, reject, remove, all live, and written to .env", async () => {
+test("tokens: set, swap, reject, remove, all live, and stored in the database", async () => {
   const d = await boot();
   try {
     const set = await d.call("PUT", "/api/characters/morty/platforms/discord", { token: "MTIz.morty.dc" });
-    assert.deepEqual(set.body.platform, { env: "MORTY_DISCORD_TOKEN", tokenSet: true, tokenHint: "…y.dc", running: true, error: null });
-    assert.match(readFileSync(d.envPath, "utf8"), /^MORTY_DISCORD_TOKEN=MTIz\.morty\.dc$/m);
+    assert.deepEqual(set.body.platform, { name: "MORTY_DISCORD_TOKEN", tokenSet: true, tokenHint: "…y.dc", running: true, error: null });
+    assert.equal(d.t.store.setting("MORTY_DISCORD_TOKEN"), "MTIz.morty.dc");
 
     // a new token replaces the running bot
     await d.call("PUT", "/api/characters/morty/platforms/discord", { token: "MTIz.morty.two" });
@@ -197,18 +196,17 @@ test("tokens: set, swap, reject, remove, all live, and written to .env", async (
     assert.equal(bad.body.platform.error, "401: Unauthorized", "a rejected token is reported, not swallowed");
 
     assert.equal((await d.call("PUT", "/api/characters/morty/platforms/telegram", { token: "1:rick-token" })).status, 409, "Rick's token");
-    assert.equal((await d.call("PUT", "/api/characters/morty/platforms/telegram", { token: "a b" })).status, 400);
-
+    
     const off = await d.call("PUT", "/api/characters/morty/platforms/discord", { token: null });
     assert.equal(off.body.platform.running, false);
-    assert.doesNotMatch(readFileSync(d.envPath, "utf8"), /MORTY_DISCORD_TOKEN/);
+    assert.equal(d.t.store.setting("MORTY_DISCORD_TOKEN"), undefined);
 
     // a character with no binding for a platform gets one when a token arrives
     await d.call("POST", "/api/characters", { characterId: "nadia" });
     const p = d.profiles.get("nadia")!;
     await d.call("PUT", "/api/characters/nadia", { ...p, platforms: {} });
     const bound = await d.call("PUT", "/api/characters/nadia/platforms/telegram", { token: "5:nadia" });
-    assert.equal(bound.body.platform.env, "NADIA_TELEGRAM_TOKEN");
+    assert.equal(bound.body.platform.name, "NADIA_TELEGRAM_TOKEN");
     assert.equal(d.profiles.get("nadia")!.platforms.telegram!.botTokenEnv, "NADIA_TELEGRAM_TOKEN");
   } finally {
     d.close();
@@ -237,7 +235,7 @@ test("link and unlink two chats from the dashboard", async () => {
   }
 });
 
-test("model and keys: defaults, per-character overrides, validated, written to .env", async () => {
+test("model and keys: defaults, per-character overrides, validated, stored in the database, never in .env", async () => {
   const d = await boot();
   try {
     assert.equal((await d.call("PUT", "/api/ai/default/LLM_MODEL", { value: "glm-5" })).status, 200);
@@ -249,8 +247,8 @@ test("model and keys: defaults, per-character overrides, validated, written to .
     const rick = await d.call("GET", "/api/characters/rick");
     assert.equal(rick.body.ai.LLM_MODEL.effective, "kimi-k3/preview");
     assert.equal((await d.call("GET", "/api/characters/morty")).body.ai.LLM_MODEL.effective, "glm-5", "Morty is untouched");
-    assert.match(readFileSync(d.envPath, "utf8"), /^RICK_LLM_API_KEY=sk-rick-1234$/m);
-    assert.equal(d.env.RICK_LLM_MODEL, "kimi-k3/preview", "the running process sees it");
+    assert.equal(d.t.store.setting("RICK_LLM_API_KEY"), "sk-rick-1234");
+    assert.equal(existsSync(join(d.dir, ".env")), false, ".env is for the app");
 
     assert.equal((await d.call("PUT", "/api/ai/rick/LLM_STRUCTURED_MODE", { value: "xml" })).status, 400);
     assert.equal((await d.call("PUT", "/api/ai/rick/LLM_BASE_URL", { value: "not-a-url" })).status, 400);

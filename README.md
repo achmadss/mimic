@@ -6,30 +6,28 @@ Human-like chat engine. Design: `docs/README.md`. Plans: `docs/superpowers/plans
 
 ```bash
 npm install
-cp .env.example .env   # fill TYPESAFE_API_KEY, LLM_API_KEY, LLM_MODEL (list: GET $LLM_BASE_URL/models)
-npm run cli -- rick    # or morty; chat in the terminal
-npm start              # Telegram/Discord for every character with a token set
+npm start              # then open http://127.0.0.1:8787 → Settings: base URL, API key, pick a model, Jev key
+npm run cli -- rick    # or morty; chat in the terminal (uses the keys saved in the dashboard)
 npm test
 ```
 
 ## Run with Docker
 
 ```bash
-cp .env.example .env     # fill TYPESAFE_API_KEY, LLM_*, and DASHBOARD_PASSWORD
+echo DASHBOARD_PASSWORD=pick-one > .env
 mkdir -p data
 docker compose up -d
 ```
 
-Then open **http://127.0.0.1:8787** (any user name, your `DASHBOARD_PASSWORD`)
-and paste each character's bot tokens there, or put them in `.env` first.
-
-- **`.env` must exist before the first `up`.** Docker mounts a missing file as
-  an empty directory. The dashboard writes tokens into it, and the app reads it
-  at every start, so a token added in the dashboard survives restarts.
+Then open **http://127.0.0.1:8787** (any user name, your `DASHBOARD_PASSWORD`).
+In **Settings**, save the LLM base URL and API key, pick a model from the list
+that appears, and save the Jev key; then paste each character's bot tokens on
+their page. All of that is stored in the database, not `.env`, which only holds
+app settings (see `.env.example`).
 - **`DASHBOARD_PASSWORD` is required** in the container: the dashboard listens
   on all interfaces inside it, and refuses to do that without one. Compose only
   publishes it on this machine's localhost.
-- **Your data is in `./data`** (database, saved settings) and `./characters`.
+- **Your data is in `./data`** (database, with keys and tokens; saved settings) and `./characters`.
   Both are mounted, so rebuilding the image loses nothing.
 - **Bringing over an existing database:** stop the bot first, then
   `mv mimic.db mimic.db-wal mimic.db-shm data/` (the `-wal`/`-shm` files may
@@ -78,15 +76,16 @@ While the bot runs, **http://127.0.0.1:8787** is a dashboard for all of it:
   next message; the routine is re-armed at once. New characters start from
   `_template.json`.
 - **Bot tokens** — paste a Telegram and/or a Discord token per character. It is
-  checked against the platform, written to `.env` (only the last 4 characters
+  checked against the platform, stored in the database (only the last 4 characters
   are ever shown), and the bot goes live, swaps, or goes offline at once: no
   restart for any token or platform change. A rejected token is shown as an
   error on the character. Two characters cannot share a token.
 - **Model & keys** — the LLM base URL, model, API key and structured mode, and
   the Jev (Typesafe) key. Settings holds the defaults; each character can
   override any of them (`RICK_LLM_MODEL`, `MORTY_TYPESAFE_API_KEY`, …), so
-  characters can run on different models or accounts. Written to `.env` and
-  live on the next message; the model field suggests what the provider lists.
+  characters can run on different models or accounts. Stored in the database
+  and live on the next message. The model is picked from the provider's list,
+  which appears once the base URL and API key are saved.
 - **Settings** — every engine knob, saved to `mimic.config.json` (only what
   differs from the defaults) and live on the next message. Saved settings win
   over the `MIMIC_*` env overrides.

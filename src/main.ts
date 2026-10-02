@@ -1,4 +1,4 @@
-import { aiClients } from "./ai.ts";
+import { AI_VARS, aiClients, aiVarName, importFromEnv } from "./ai.ts";
 import { availability, PRESENCE } from "./character/derived.ts";
 import { loadProfiles } from "./character/profile.ts";
 import { RoutineEngine } from "./character/routine-engine.ts";
@@ -27,14 +27,27 @@ function configFromEnv(): Config {
 const store = new Store(openDb(process.env.DB_PATH ?? "mimic.db"));
 const CHARACTERS_DIR = process.env.MIMIC_CHARACTERS ?? "characters";
 const profiles = loadProfiles(CHARACTERS_DIR);
-// read per call: keys and models saved in the dashboard apply without a restart
-const ai = aiClients(process.env);
-
 const log = (m: string, e?: unknown) => console.error(`[mimic] ${m}`, e ?? "");
+const setting = (name: string) => store.setting(name);
+
+// keys, tokens and models live in the database; ones left in an older .env are moved in once
+const moved = importFromEnv(
+  process.env,
+  [
+    ...AI_VARS,
+    ...[...profiles.keys()].flatMap((id) => AI_VARS.map((v) => aiVarName(id, v))),
+    ...[...profiles.values()].flatMap((p) => BOT_PLATFORMS.flatMap((k) => p.platforms[k]?.botTokenEnv ?? [])),
+  ],
+  setting,
+  (n, v) => store.setSetting(n, v),
+);
+if (moved.length) log(`copied ${moved.join(", ")} from .env into the database; the dashboard manages them now, so delete them from .env`);
+
+// read per call: keys and models saved in the dashboard apply without a restart
+const ai = aiClients(setting);
 
 // env, then whatever the dashboard saved on top: the last thing someone set is what runs
 const CONFIG_PATH = process.env.MIMIC_CONFIG ?? "mimic.config.json";
-const ENV_PATH = process.env.MIMIC_ENV_FILE ?? ".env";
 const config = configFromEnv();
 applyConfig(config, readConfigFile(CONFIG_PATH));
 
@@ -49,7 +62,7 @@ let im!: InteractionManager;
 const adapters = new AdapterRegistry({
   // a CLI run is a local test: it must never put a character live on Telegram or Discord
   allowed: cliIdx >= 0 ? [] : BOT_PLATFORMS,
-  env: process.env,
+  secret: setting,
   create: (platform, token) => (platform === "telegram" ? new TelegramAdapter(token) : new DiscordAdapter(token)),
   receive: (characterId, platform, m) => im.receive(characterId, platform, m),
   onStart: async (characterId, platform, adapter) => {
@@ -94,7 +107,7 @@ for (const id of profiles.keys()) {
 
 if (dashboardOn) {
   startDashboard(
-    { store, clock: realClock, im, routine, profiles, config, configPath: CONFIG_PATH, charactersDir: CHARACTERS_DIR, adapters, envPath: ENV_PATH, env: process.env },
+    { store, clock: realClock, im, routine, profiles, config, configPath: CONFIG_PATH, charactersDir: CHARACTERS_DIR, adapters },
     { host: process.env.DASHBOARD_HOST ?? "127.0.0.1", port: Number(process.env.DASHBOARD_PORT ?? 8787), password: process.env.DASHBOARD_PASSWORD || undefined },
   );
 }

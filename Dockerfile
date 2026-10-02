@@ -14,5 +14,4 @@ ENV DB_PATH=data/mimic.db \
     MIMIC_CONFIG=data/mimic.config.json \
     DASHBOARD_HOST=0.0.0.0
 EXPOSE 8787
-# .env is read at every start, not baked in at create time: the dashboard writes tokens to it
-CMD ["node", "--env-file-if-exists=.env", "--import", "tsx", "src/main.ts"]
+CMD ["node", "--import", "tsx", "src/main.ts"]

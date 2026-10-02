@@ -74,6 +74,11 @@ CREATE TABLE IF NOT EXISTS events (
   type TEXT NOT NULL,
   payload TEXT NOT NULL
 );
+-- API keys, bot tokens and model choices, set from the dashboard. Kept here, not in .env.
+CREATE TABLE IF NOT EXISTS settings (
+  name TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 /** Additive column migrations — `CREATE TABLE IF NOT EXISTS` cannot widen a table that already exists. */

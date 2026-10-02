@@ -12,11 +12,7 @@ cp characters/_template.json characters/nadia.json
 # edit it, then set characterId to match the filename
 ```
 
-Set the token env vars it names in `.env`, restart, and it is live:
-
-```
-NADIA_TELEGRAM_TOKEN=...
-```
+Paste its bot tokens on its page in the dashboard, and it is live (no restart).
 
 `cp` alone will not work until you change `characterId` — the loader keys
 characters by that field, not by the filename. A duplicate `characterId` in two
