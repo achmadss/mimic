@@ -1,6 +1,6 @@
 import { availability, interruptibility } from "../character/derived.ts";
 import type { CharacterProfile } from "../character/profile.ts";
-import type { Activity, Mood, Trigger } from "../types.ts";
+import type { Activity, Mood, Trigger, UnresolvedItem } from "../types.ts";
 
 export interface JevStateInput {
   trigger: Trigger;
@@ -19,6 +19,8 @@ export interface JevStateInput {
   turn: { texts: string[]; firstAt: number; lastAt: number } | null;
   recent: { role: "user" | "bot"; text: string; at: number }[];
   pending: { id: string; text: string; dueAt: number }[];
+  /** Already pruned and capped: the threads nothing has asked about yet (doc 05 §6). */
+  openThreads: UnresolvedItem[];
 }
 
 /**
@@ -58,5 +60,7 @@ export function buildJevState(i: JevStateInput) {
     recentMessages: i.recent.slice(-10).map((m) => ({ from: m.role, text: m.text, agoMs: i.now - m.at })),
     currentTurn: i.turn?.texts ?? [],
     pendingBots: i.pending.map((m) => ({ id: m.id, text: m.text, dueInMs: m.dueAt - i.now })),
+    // summaries, never raw rows (doc 04 §1)
+    unresolved: i.openThreads.map((t) => ({ id: t.id, summary: t.summary })),
   };
 }

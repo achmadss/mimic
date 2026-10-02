@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   last_user_at INTEGER NOT NULL DEFAULT 0,
   last_bot_at INTEGER NOT NULL DEFAULT 0,
   attention REAL,
-  attention_raised_at INTEGER
+  attention_raised_at INTEGER,
+  unresolved TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
@@ -49,6 +50,14 @@ CREATE TABLE IF NOT EXISTS actions (
   kind TEXT NOT NULL,
   due_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS examples (
+  id TEXT PRIMARY KEY,
+  character_id TEXT NOT NULL,
+  episode TEXT NOT NULL,
+  emotion TEXT NOT NULL,
+  lines TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS examples_character_emotion ON examples (character_id, emotion);
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   conversation_id TEXT NOT NULL,
@@ -62,6 +71,7 @@ CREATE TABLE IF NOT EXISTS events (
 const MIGRATIONS: [table: string, column: string, type: string][] = [
   ["character_state", "mood", "TEXT"],
   ["character_state", "mood_changed_at", "INTEGER"],
+  ["conversations", "unresolved", "TEXT"],
 ];
 
 export function openDb(path: string): DB {

@@ -1,5 +1,5 @@
 import type { DB } from "./db.ts";
-import type { ActionRow, BotMessage, CharacterState, ConversationState, MessageStatus, Platform, TurnBuffer } from "./types.ts";
+import type { ActionRow, BotMessage, CharacterState, ConversationState, Emotion, Example, MessageStatus, Platform, TurnBuffer, UnresolvedItem } from "./types.ts";
 
 type Row = Record<string, any>;
 
@@ -15,6 +15,15 @@ const toConversation = (r: Row): ConversationState => ({
   lastBotAt: r.last_bot_at,
   attention: r.attention,
   attentionRaisedAt: r.attention_raised_at,
+  unresolved: r.unresolved ? (JSON.parse(r.unresolved) as UnresolvedItem[]) : [],
+});
+
+const toExample = (r: Row): Example => ({
+  id: r.id,
+  characterId: r.character_id,
+  episode: r.episode,
+  emotion: r.emotion,
+  lines: JSON.parse(r.lines),
 });
 
 const toBotMessage = (r: Row): BotMessage => ({
@@ -67,9 +76,35 @@ export class Store {
     this.db
       .prepare(
         `UPDATE conversations SET version = ?, topic = ?, topic_started_at = ?, last_user_at = ?,
-         last_bot_at = ?, attention = ?, attention_raised_at = ? WHERE id = ?`,
+         last_bot_at = ?, attention = ?, attention_raised_at = ?, unresolved = ? WHERE id = ?`,
       )
-      .run(c.version, c.topic, c.topicStartedAt, c.lastUserAt, c.lastBotAt, c.attention, c.attentionRaisedAt, c.conversationId);
+      .run(
+        c.version, c.topic, c.topicStartedAt, c.lastUserAt, c.lastBotAt, c.attention, c.attentionRaisedAt,
+        JSON.stringify(c.unresolved ?? []), c.conversationId,
+      );
+  }
+
+  /** Offline content, written only by the ingest script. Re-running it replaces by id. */
+  saveExample(e: Example) {
+    this.db
+      .prepare("INSERT OR REPLACE INTO examples (id, character_id, episode, emotion, lines) VALUES (?, ?, ?, ?, ?)")
+      .run(e.id, e.characterId, e.episode, e.emotion, JSON.stringify(e.lines));
+  }
+
+  /** The candidate pool for one emotion, bounded by `limit` — the seeded pick happens over this. */
+  examplesFor(characterId: string, emotion: Emotion, limit: number): Example[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM examples WHERE character_id = ? AND emotion = ? ORDER BY id LIMIT ?")
+        .all(characterId, emotion, limit) as Row[]
+    ).map(toExample);
+  }
+
+  exampleCount(characterId?: string): number {
+    const r = characterId
+      ? this.db.prepare("SELECT COUNT(*) AS n FROM examples WHERE character_id = ?").get(characterId)
+      : this.db.prepare("SELECT COUNT(*) AS n FROM examples").get();
+    return (r as { n: number }).n;
   }
 
   getCharacterState(characterId: string, now: number): CharacterState {
@@ -99,17 +134,20 @@ export class Store {
     );
   }
 
-  /** User messages plus sent bot messages, oldest first, strictly before `before`. */
-  recentMessages(conversationId: string, limit: number, before = Number.MAX_SAFE_INTEGER): { role: "user" | "bot"; text: string; at: number }[] {
+  /**
+   * User messages plus sent bot messages, oldest first, strictly before `before` and at/after
+   * `since`. `since` is the topic-scoped window (doc 05 §5); 0 is the whole conversation.
+   */
+  recentMessages(conversationId: string, limit: number, before = Number.MAX_SAFE_INTEGER, since = 0): { role: "user" | "bot"; text: string; at: number }[] {
     return this.db
       .prepare(
         `SELECT role, text, at FROM (
            SELECT role, text, at, rowid AS rid FROM messages
-           WHERE conversation_id = ? AND at < ? AND (role = 'user' OR status = 'sent')
+           WHERE conversation_id = ? AND at < ? AND at >= ? AND (role = 'user' OR status = 'sent')
            ORDER BY at DESC, rid DESC LIMIT ?
          ) ORDER BY at, rid`,
       )
-      .all(conversationId, before, limit) as { role: "user" | "bot"; text: string; at: number }[];
+      .all(conversationId, before, since, limit) as { role: "user" | "bot"; text: string; at: number }[];
   }
 
   insertBotMessage(m: BotMessage) {

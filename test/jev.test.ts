@@ -5,9 +5,10 @@ import { httpJevClient, type JevAnswers } from "../src/jev/client.ts";
 import { buildQuestions } from "../src/jev/questions.ts";
 import { buildJevState, type JevStateInput } from "../src/jev/state.ts";
 import { FOLLOW_UP_MS, decide, type DecideContext } from "../src/jev/decide.ts";
+import { EMOTIONS } from "../src/types.ts";
 
 const ctx = (over: Partial<DecideContext> = {}): DecideContext => ({
-  trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, ...over,
+  trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, openThreadThreshold: 0.55, ...over,
 });
 const choice = (c: string, confidence = 0.9) => ({ type: "choice" as const, choice: c, confidence, probabilities: { [c]: confidence } });
 const noul = (p: number) => ({ type: "noul" as const, noul: p });
@@ -38,6 +39,41 @@ test("questions: topic only on user turns, one choice per pending message", () =
   assert.equal(q.pending_m1.type, "choice");
   assert.deepEqual(Object.keys((q.pending_m1 as any).criteria), ["continue", "cancel", "delay", "replace"]);
   assert.equal(buildQuestions("followup_due", []).topic_action, undefined);
+});
+
+test("questions: the register and the open thread are asked only where they can be read", () => {
+  const ut = buildQuestions("user_turn", []);
+  assert.deepEqual(Object.keys((ut.turn_emotion as any).criteria), [...EMOTIONS]);
+  assert.equal(ut.opens_thread?.type, "noul");
+  // both are judgements about the user's own message, so neither applies without one
+  for (const trigger of ["followup_due", "activity_changed"] as const) {
+    assert.equal(buildQuestions(trigger, []).turn_emotion, undefined, trigger);
+    assert.equal(buildQuestions(trigger, []).opens_thread, undefined, trigger);
+  }
+});
+
+test("questions: a thread left open is given to `topic_action`, so `ask` has a referent", () => {
+  const thread = { id: "t1", summary: "interview tomorrow", raisedAt: 0 };
+  const withThread = buildQuestions("user_turn", [], [thread]).topic_action as any;
+  assert.deepEqual(withThread.instructions.unresolved, ["interview tomorrow"]);
+  assert.match(withThread.criteria.ask, /unresolved/);
+
+  const without = buildQuestions("user_turn", []).topic_action as any;
+  assert.equal("unresolved" in without.instructions, false);
+  assert.match(without.criteria.ask, /new topic/);
+});
+
+test("decide: emotion and the open thread are read on a user turn only", () => {
+  assert.equal(decide({ turn_emotion: choice("annoyed") }, ctx()).emotion, "annoyed");
+  assert.equal(decide({ turn_emotion: choice("joking", 0.1) }, ctx()).emotion, "neutral", "a torn answer is not a register");
+  assert.equal(decide({}, ctx()).emotion, "neutral");
+  assert.equal(decide({ turn_emotion: choice("annoyed") }, ctx({ trigger: "followup_due" })).emotion, undefined);
+  assert.equal(decide({ turn_emotion: choice("annoyed") }, ctx({ trigger: "activity_changed" })).emotion, undefined);
+
+  assert.equal(decide({ opens_thread: noul(0.9) }, ctx()).openThread, true);
+  assert.equal(decide({ opens_thread: noul(0.5) }, ctx()).openThread, false);
+  assert.equal(decide({ opens_thread: noul(0.9) }, ctx({ trigger: "followup_due" })).openThread, false);
+  assert.equal(decide({ opens_thread: noul(0.9) }, ctx({ trigger: "activity_changed" })).openThread, false);
 });
 
 test("decide: Jev unavailable → safe defaults, every pending message cancelled", () => {
@@ -145,6 +181,7 @@ test("Jev state carries the timestamps it used to be starved of", () => {
     turn: { texts: ["hey"], firstAt: now - 12_000, lastAt: now - 2_000 },
     recent: [{ role: "user", text: "hey", at: now - 30_000 }],
     pending: [{ id: "b1", text: "one sec", dueAt: now + 45_000 }],
+    openThreads: [{ id: "t1", summary: "interview tomorrow", raisedAt: now - 60_000 }],
   };
   const s = buildJevState(input) as any;
   assert.equal(s.mood, "tired");
@@ -159,6 +196,8 @@ test("Jev state carries the timestamps it used to be starved of", () => {
   });
   assert.deepEqual(s.recentMessages, [{ from: "user", text: "hey", agoMs: 30_000 }]);
   assert.deepEqual(s.pendingBots, [{ id: "b1", text: "one sec", dueInMs: 45_000 }]);
+  // summaries, not rows: Jev never sees `raisedAt`
+  assert.deepEqual(s.unresolved, [{ id: "t1", summary: "interview tomorrow" }]);
   // a character who has never sent anything, on a turn with no history, must not produce NaN
   const bare = buildJevState({ ...input, trigger: "followup_due", lastBotAt: 0, mood: "neutral", moodChangedAt: null, turn: null, recent: [], pending: [] }) as any;
   assert.equal(bare.since.lastBotMsgAgoMs, null);

@@ -18,6 +18,36 @@ export type Trigger = "user_turn" | "followup_due" | "activity_changed";
 export const MESSAGE_LENGTHS = ["terse", "short", "normal", "long"] as const;
 export type MessageLength = (typeof MESSAGE_LENGTHS)[number];
 
+/** Doc 04 §1: `turn_emotion` and the example tag are the same set, on purpose. */
+export const EMOTIONS = ["neutral", "excited", "annoyed", "sad", "confused", "joking", "serious"] as const;
+export type Emotion = (typeof EMOTIONS)[number];
+
+/** One line of source dialogue. The speaker is normalized (`"Rick:"` → `"rick"`) and rendered back. */
+export interface ExampleLine {
+  speaker: string;
+  text: string;
+}
+
+/** A tagged stretch of source dialogue, retrieved at reply time by `(characterId, emotion)`. */
+export interface Example {
+  /** `${characterId}:${episode}:${firstRow}` — stable across reruns, so ingest can `OR REPLACE`. */
+  id: string;
+  characterId: string;
+  episode: string;
+  emotion: Emotion;
+  lines: ExampleLine[];
+}
+
+/**
+ * Doc 02 §1. The stored list *is* the open set: a thread is removed once it has been asked about,
+ * so there is no `status` to write and never read.
+ */
+export interface UnresolvedItem {
+  id: string;
+  summary: string;
+  raisedAt: number;
+}
+
 export interface ConversationState {
   conversationId: string;
   characterId: string;
@@ -30,6 +60,7 @@ export interface ConversationState {
   lastBotAt: number;
   attention: number | null;
   attentionRaisedAt: number | null;
+  unresolved: UnresolvedItem[];
 }
 
 /** Doc 02 §1. Set by Jev, persisted, and expired on a TTL by `moodNow`. */
@@ -84,6 +115,10 @@ export interface BehaviorDecision {
   mood?: Mood;
   askQuestion: boolean;
   attentionRaise?: number;
+  /** Undefined off a user turn: there is no user message to read a register from. */
+  emotion?: Emotion;
+  /** The user raised something still open; the LLM writes the summary (doc 04 §1). */
+  openThread: boolean;
   pendingActions: { messageId: string; action: PendingDecision }[];
   answers: unknown; // raw Jev answers, for the event log
 }
@@ -91,4 +126,6 @@ export interface BehaviorDecision {
 export interface LLMOutput {
   messages: { text: string; correction?: string | null }[];
   topic?: string | null;
+  /** Required when `BehaviorDecision.openThread`; the label Jev cannot write. */
+  openThread?: string | null;
 }

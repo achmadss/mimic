@@ -5,6 +5,7 @@ import { applyStyle, humanize, styleFor, type MessageStyle } from "../character/
 import type { CharacterProfile } from "../character/profile.ts";
 import type { Clock } from "../clock.ts";
 import type { Config } from "../config.ts";
+import { contextWindow, nextOpenThreads, openThreads, selectExamples } from "../context/context.ts";
 import type { JevAnswers, JevClient } from "../jev/client.ts";
 import { decide } from "../jev/decide.ts";
 import { buildQuestions } from "../jev/questions.ts";
@@ -14,7 +15,7 @@ import { buildPrompt } from "../llm/prompt.ts";
 import type { Scheduler } from "../scheduler.ts";
 import type { Store } from "../store.ts";
 import { delayOffset, replyOffsets } from "../timing.ts";
-import type { BehaviorDecision, BotMessage, ConversationState, LLMOutput, Trigger } from "../types.ts";
+import type { BehaviorDecision, BotMessage, ConversationState, LLMOutput, Trigger, UnresolvedItem } from "../types.ts";
 
 /**
  * Jev chooses the beat count before the model writes, so sometimes the model answers "3" with one
@@ -66,9 +67,13 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
   const attention = attentionNow(conv, profile, activity, now);
   const mood = moodNow(cs, now);
   const pending = store.pendingBotMessages(conversationId);
-  const recent = store.recentMessages(conversationId, config.recentMessages, turn?.firstAt);
+  const recent = contextWindow(conv, config, (since) =>
+    store.recentMessages(conversationId, config.recentMessages, turn?.firstAt, since),
+  );
   const localTime = formatLocalTime(now, profile.timezone);
   const texts = turn?.texts ?? [];
+  // pruned and capped here, so Jev sees the same list the turn will act on
+  const open = openThreads(conv.unresolved, now, config);
 
   let answers: JevAnswers | null = null;
   try {
@@ -88,8 +93,9 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
       turn,
       recent,
       pending,
+      openThreads: open,
     });
-    answers = await d.jev.ask(state, buildQuestions(trigger, pending));
+    answers = await d.jev.ask(state, buildQuestions(trigger, pending, open));
   } catch (e) {
     d.log("jev unavailable, using defaults", e);
   }
@@ -102,6 +108,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
     scoreConfidence: config.scoreConfidence,
     noulThreshold: config.noulThreshold,
     followUpThreshold: config.followUpThreshold,
+    openThreadThreshold: config.openThreadThreshold,
   });
 
   const kept = store.tx(() => applyDecision(d, conv, decision, pending, now));
@@ -111,21 +118,45 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
   // the seed for both the send jitter and the per-message style, fixed before the model runs
   const generationId = randomUUID();
   const styles = styleFor(profile, generationId, decision.messageCount);
+  // a seeded draw over the emotion bucket: same generation seed, same examples
+  const examples = decision.emotion
+    ? selectExamples(store.examplesFor(conv.characterId, decision.emotion, config.examplePool), config.maxExamples, generationId)
+    : [];
+  const asking = decision.topicAction === "ask" ? open : [];
+  // What this turn was actually built from (doc 04 §2: recorded for explainability). The prompt is
+  // not stored, but its inputs are, and they are what explain a surprising reply.
+  store.appendEvent(conversationId, now, "CONTEXT_RETRIEVED", {
+    window: conv.topicStartedAt && recent.length >= config.minRecentMessages ? "recent_topic" : "recent",
+    messages: recent.length,
+    examples: examples.map((e) => e.id),
+    openThreads: open.map((t) => t.id),
+    asking: asking.map((t) => t.id),
+  });
 
   let output: LLMOutput;
   try {
     output = await d.llm.generate(
-      buildPrompt({ profile, decision, trigger, activity, mood, localTime, topic: conv.topic, recent, turn: texts, keptPending: kept.map((m) => m.text), styles }),
+      buildPrompt({
+        profile, decision, trigger, activity, mood, localTime, topic: conv.topic, recent, turn: texts,
+        keptPending: kept.map((m) => m.text), styles, examples, askAbout: asking.map((t) => t.summary),
+      }),
       // hashed: the provider gets a stable per-conversation routing key, not the user's platform chat id
       { sessionId: createHash("sha256").update(conversationId).digest("hex").slice(0, 32) },
     );
   } catch (e) {
+    // A thread is consumed by being asked, and nothing was asked: the list is left untouched.
     d.log("llm failed; staying silent", e);
     store.appendEvent(conversationId, clock.now(), "LLM_GENERATION_FAILED", { error: String(e) });
     return;
   }
   const speed = speedMultiplier(profile, activity, Math.max(attention, decision.attentionRaise ?? 0));
-  store.tx(() => scheduleReply(d, conversationId, decision, output, kept, speed, generationId, styles));
+  const unresolved = nextOpenThreads(
+    open,
+    { asked: asking, raised: decision.openThread ? (output.openThread ?? null) : null, about: texts.join(" ") },
+    now,
+    config,
+  );
+  store.tx(() => scheduleReply(d, conversationId, decision, output, kept, speed, generationId, styles, unresolved));
 }
 
 function applyDecision(d: Deps, conv: ConversationState, decision: BehaviorDecision, pending: BotMessage[], now: number): BotMessage[] {
@@ -174,6 +205,7 @@ function scheduleReply(
   speed: number,
   generationId: string,
   styles: MessageStyle[],
+  unresolved: UnresolvedItem[],
 ) {
   const { store, scheduler, clock, config } = d;
   const now = clock.now();
@@ -204,6 +236,11 @@ function scheduleReply(
   if (decision.topicAction === "switch" && newTopic) {
     store.saveConversation({ ...conv, topic: newTopic, topicStartedAt: now });
     store.appendEvent(conversationId, now, "TOPIC_CHANGED", { topic: newTopic });
+  }
+  // one write for both fields: the topic switch above and the thread list are the same save
+  if (unresolved !== conv.unresolved) {
+    store.saveConversation({ ...(store.getConversation(conversationId) ?? conv), unresolved });
+    store.appendEvent(conversationId, now, "UNRESOLVED_CHANGED", { open: unresolved.map((t) => t.summary) });
   }
 
   const start = Math.max(now, ...kept.map((m) => m.dueAt));

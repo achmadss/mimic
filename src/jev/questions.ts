@@ -1,8 +1,8 @@
-import type { Trigger } from "../types.ts";
+import type { Trigger, UnresolvedItem } from "../types.ts";
 import type { JevQuestion } from "./client.ts";
 
 /** One Jev request per trigger: every judgement is a question here (doc 04 §1). */
-export function buildQuestions(trigger: Trigger, pending: { id: string; text: string }[]): Record<string, JevQuestion> {
+export function buildQuestions(trigger: Trigger, pending: { id: string; text: string }[], open: UnresolvedItem[] = []): Record<string, JevQuestion> {
   const q: Record<string, JevQuestion> = {};
 
   // An activity change re-decides what is already queued; nothing is being written, so none of the
@@ -76,14 +76,50 @@ export function buildQuestions(trigger: Trigger, pending: { id: string; text: st
   if (trigger === "user_turn") {
     q.topic_action = {
       type: "choice",
-      instructions: "How should `character` handle the subject of `currentTurn` relative to the current `topic`?",
+      // `ask` measured 0.15 against continue 0.45 on the one turn where nothing new was raised: it
+      // had no referent, because unresolved threads were not in the question. Doc 05 §6 step 3 wants
+      // `ask` to be how a thread left open days ago comes back, so the option is given the list.
+      instructions: {
+        question: "How should `character` handle the subject of `currentTurn` relative to the current `topic`?",
+        ...(open.length ? { unresolved: open.map((t) => t.summary) } : {}),
+      },
       criteria: {
         continue: "Stay on the current topic",
         switch: "Move to the new topic the user raised",
         acknowledge_return: "Briefly acknowledge the new topic, then return to the current one",
         ignore: "Ignore the new topic for now",
-        ask: "Ask the user about the new topic",
+        ask: open.length
+          ? "Bring up something in `unresolved` — leave off what they just said and ask them about that instead"
+          : "Ask the user about the new topic",
       },
+    };
+    q.turn_emotion = {
+      type: "choice",
+      // Doc 05 §5.1: the same set as the example tags, so a tagged exchange can be matched to the
+      // register of the turn that wants it. No gate here — this picks a bucket, it does not move state.
+      instructions: "What is the emotional register of `currentTurn` — the thing `character` is reading?",
+      criteria: {
+        neutral: "Ordinary, matter-of-fact",
+        excited: "Something good happened, or they are wound up",
+        annoyed: "Complaining, irritated, picking a fight",
+        sad: "Down about something, hurting",
+        confused: "Lost, or did not understand something",
+        joking: "Playing around, teasing, not serious",
+        serious: "Pressing, or admitting something real",
+      },
+    };
+    q.opens_thread = {
+      type: "noul",
+      // Same shape as `follow_up`, which measured a 0.49 median against the shared threshold and so
+      // never fired (doc 04 §1): ask about a concrete unresolved *event*, not "anything worth asking
+      // about later".
+      //
+      // Measured live at 0.76-0.88 on four consecutive turns, including "ok i'm back" — Jev was
+      // reading the whole state, where `unresolved` already had items, and answering about the
+      // conversation instead of the message. Naming the exclusion is the fix: this question is about
+      // `currentTurn` and nothing else.
+      instructions:
+        "Look only at `currentTurn`, the user's newest message. Does it mention something concrete that is still open — an event that has not happened yet, a plan, a result they are waiting on? 'interview tomorrow', 'waiting on the scan'. Things raised in earlier turns are not in `currentTurn` and do not count.",
     };
     q.mood = {
       type: "choice",

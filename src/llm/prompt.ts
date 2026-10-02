@@ -1,6 +1,7 @@
 import type { CharacterProfile } from "../character/profile.ts";
 import type { MessageStyle } from "../character/style.ts";
-import type { Activity, BehaviorDecision, MessageLength, Mood, TopicAction, Trigger } from "../types.ts";
+import { renderExchange } from "../context/ingest.ts";
+import type { Activity, BehaviorDecision, Example, MessageLength, Mood, TopicAction, Trigger } from "../types.ts";
 import type { ChatMessage } from "./client.ts";
 
 export interface PromptInput {
@@ -17,6 +18,10 @@ export interface PromptInput {
   keptPending: string[];
   /** Rolled by the System, one per message (doc 06 §2.2). */
   styles: MessageStyle[];
+  /** Source dialogue matching the turn's register (doc 05 §5.1). Empty for a follow-up. */
+  examples: Example[];
+  /** Open threads, when Jev chose to ask about them. */
+  askAbout: string[];
 }
 
 /**
@@ -67,6 +72,11 @@ export function buildPrompt(p: PromptInput): ChatMessage[] {
     `Each message is ${p.decision.messageLength}, so keep it under about ${perMessage} characters.`,
     "Never use an em dash. Never narrate an action or a sound at yourself, like *burp* or *sighs* or *laughs*: you are a person typing, not a script with stage directions. No markdown, no asterisks, no emphasis.",
     slang.length ? `Things you sometimes say (sparingly, never every message): ${slang.join(", ")}.` : "",
+    // Doc 05 §5.1: voice vs format is the *label*, not the content. Show screenplay dialogue with no
+    // warning and a model starts writing screenplay dialogue.
+    p.examples.length
+      ? `Here is how ${p.profile.name} talks — lines of them, spoken not typed. Copy the voice, the vocabulary and the attitude. Never the format, never the speaker labels, never a stage direction.\n${p.examples.map((e) => renderExchange(e.lines)).join("\n---\n")}`
+      : "",
     "Never say you are an AI, a bot, or a character in a show.",
     `Right now it is ${p.localTime} for you and you are ${p.activity}.`,
     p.mood === "neutral" ? "" : `You are feeling ${p.mood} right now, and it shows in how you write.`,
@@ -79,11 +89,15 @@ export function buildPrompt(p: PromptInput): ChatMessage[] {
           : `Do not fix it: leave "correction" null. People don't correct themselves every time.`)
       : `Set every "correction" to null.`,
     p.decision.askQuestion ? "Ask them something." : "",
+    p.askAbout.length ? `You have been meaning to ask them about: ${p.askAbout.join("; ")}. Ask them now.` : "",
     p.trigger === "user_turn" ? TOPIC_INSTRUCTION[p.decision.topicAction] : "",
     p.keptPending.length ? `These messages of yours are already queued and will be sent first: ${p.keptPending.map((t) => JSON.stringify(t)).join(", ")}. Don't repeat them.` : "",
     p.trigger === "followup_due" ? "They haven't written anything new. You are messaging them again on your own, following up on the conversation so far." : "",
     'If you switch to a new topic, set "topic" to a 1-4 word label for it; otherwise set "topic" to null.',
-    'Reply as JSON: {"messages":[{"text":"...","correction":null}],"topic":null}',
+    // "this message", not "they mentioned": measured live, the model summarised the open *topic*
+    // instead of the thing the user had just said, and stored a thread nobody had raised.
+    'If this message mentioned something you will want to ask about later, set "openThread" to a short 2-6 word summary of that; otherwise set "openThread" to null.',
+    'Reply as JSON: {"messages":[{"text":"...","correction":null}],"topic":null,"openThread":null}',
   ]
     .filter(Boolean)
     .join("\n");

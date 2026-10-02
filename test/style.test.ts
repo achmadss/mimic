@@ -6,9 +6,9 @@ import { buildPrompt } from "../src/llm/prompt.ts";
 import { decide } from "../src/jev/decide.ts";
 
 const rick = loadProfiles("characters").get("rick")!;
-const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55 }), messageCount: 2 };
+const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, openThreadThreshold: 0.55 }), messageCount: 2 };
 const prompt = (styles: MessageStyle[]) =>
-  buildPrompt({ profile: rick, decision, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null, recent: [], turn: ["sup"], keptPending: [], styles })[0].content;
+  buildPrompt({ profile: rick, decision, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null, recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], styles })[0].content;
 
 test("styleFor: deterministic per generation, and a tendency rather than a constant", () => {
   assert.deepEqual(styleFor(rick, "gen-a", 3), styleFor(rick, "gen-a", 3));

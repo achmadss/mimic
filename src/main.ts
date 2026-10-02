@@ -31,6 +31,7 @@ function configFromEnv(): Config {
     ...DEFAULT_CONFIG,
     quietMs: num("MIMIC_QUIET_MS", DEFAULT_CONFIG.quietMs),
     followUpThreshold: num("MIMIC_FOLLOW_UP_THRESHOLD", DEFAULT_CONFIG.followUpThreshold),
+    openThreadThreshold: num("MIMIC_OPEN_THREAD_THRESHOLD", DEFAULT_CONFIG.openThreadThreshold),
   };
 }
 

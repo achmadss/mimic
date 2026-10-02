@@ -170,3 +170,93 @@ test("dropping every generated line still leaves the queued ones on their way", 
   await respond(deps, convId, "user_turn", turn(["ok"], clock.now()));
   assert.deepEqual(store.pendingBotMessages(convId).map((m) => m.id), ["keep"]);
 });
+
+const example = (id: string, emotion: "joking" | "sad" = "joking") => ({
+  id, characterId: "rick", episode: "1", emotion, lines: [{ speaker: "rick", text: id }],
+});
+
+test("examples reach the prompt for the turn's register, and never on a follow-up", async () => {
+  const { deps, store, jev, llm, convId, clock } = makeDeps();
+  store.saveExample(example("joke-1"));
+  store.saveExample(example("sad-1", "sad"));
+
+  jev.next = { turn_emotion: choice("joking") };
+  await respond(deps, convId, "user_turn", turn(["lmao"], clock.now()));
+  assert.match(llm.calls[0][0].content, /Here is how Rick talks/);
+  assert.match(llm.calls[0][0].content, /RICK: joke-1/);
+  assert.doesNotMatch(llm.calls[0][0].content, /sad-1/, "only the matching bucket is read");
+
+  // a follow-up has no user message, so there is no register to match and no example is fetched
+  const fu = makeDeps();
+  fu.store.saveExample(example("joke-1"));
+  await respond(fu.deps, fu.convId, "followup_due", null);
+  assert.doesNotMatch(fu.llm.calls[0][0].content, /Here is how Rick talks/);
+});
+
+test("a character with no examples still replies", async () => {
+  const { deps, store, llm, convId, clock } = makeDeps();
+  assert.equal(store.exampleCount(), 0);
+  await respond(deps, convId, "user_turn", turn(["hey"], clock.now()));
+  assert.equal(store.pendingBotMessages(convId).length, 1);
+  assert.equal(llm.calls.length, 1);
+});
+
+test("a raised thread is stored, offered to Jev, and retired once it has been asked about", async () => {
+  const { deps, store, jev, llm, convId, clock } = makeDeps();
+  jev.next = { opens_thread: noul(0.95) };
+  llm.outputs = [{ messages: [{ text: "good luck with it" }], openThread: "interview tomorrow" }];
+  await respond(deps, convId, "user_turn", turn(["i have the interview tomorrow"], clock.now()));
+  const open = store.getConversation(convId)!.unresolved;
+  assert.deepEqual(open.map((t) => t.summary), ["interview tomorrow"]);
+
+  // next turn Jev offers it back and decides to ask — Jev reads summaries, not rows
+  jev.next = { topic_action: choice("ask"), respond_mode: choice("now") };
+  llm.outputs = [{ messages: [{ text: "how did the interview go?" }] }];
+  await respond(deps, convId, "user_turn", turn(["im back"], clock.now()));
+  assert.deepEqual(jev.calls[1].state.unresolved, [{ id: open[0].id, summary: "interview tomorrow" }]);
+  assert.match(llm.calls[1][0].content, /meaning to ask them about: interview tomorrow/);
+  assert.deepEqual(store.getConversation(convId)!.unresolved, [], "asked once, then it is over");
+});
+
+test("an open thread is not asked about on a turn that did not choose `ask`", async () => {
+  const { deps, store, jev, llm, convId, clock } = makeDeps();
+  store.saveConversation({ ...store.getConversation(convId)!, unresolved: [{ id: "t1", summary: "interview tomorrow", raisedAt: clock.now() }] });
+  jev.next = { topic_action: choice("continue") };
+  await respond(deps, convId, "user_turn", turn(["anyway"], clock.now()));
+  assert.doesNotMatch(llm.calls[0][0].content, /meaning to ask them about/);
+  assert.equal(store.getConversation(convId)!.unresolved.length, 1, "still waiting to be asked");
+});
+
+test("a failed generation keeps the thread open: a thread is consumed by being asked", async () => {
+  const { deps, store, jev, llm, convId, clock } = makeDeps();
+  store.saveConversation({ ...store.getConversation(convId)!, unresolved: [{ id: "t1", summary: "interview tomorrow", raisedAt: clock.now() }] });
+  jev.next = { topic_action: choice("ask") };
+  llm.outputs = [new Error("down")];
+  await respond(deps, convId, "user_turn", turn(["hey"], clock.now()));
+  assert.deepEqual(store.getConversation(convId)!.unresolved.map((t) => t.id), ["t1"]);
+});
+
+test("the window follows the topic once it is built up, and falls back when it is not", async () => {
+  /** Eight messages on the old topic, then `topicMsgs` on the one that replaced it. */
+  const mk = (topicMsgs: number) => {
+    const { deps, store, llm, convId, clock } = makeDeps();
+    const now = clock.now();
+    const t0 = now - 10_000;
+    for (let i = 0; i < 8; i++) store.insertUserMessage(`old${i}`, convId, `old-${i}`, t0 + i * 100);
+    store.saveConversation({ ...store.getConversation(convId)!, topic: "keyboard", topicStartedAt: t0 + 1000 });
+    for (let i = 0; i < topicMsgs; i++) store.insertUserMessage(`new${i}`, convId, `new-${i}`, t0 + 1200 + i * 100);
+    return { deps, store, llm, convId, now };
+  };
+  // history is messages 1..n of the call, after the system prompt
+  const history = (llm: ReturnType<typeof makeDeps>["llm"]) => llm.calls[0].map((m) => m.content).join("\n");
+
+  const built = mk(8);
+  await respond(built.deps, built.convId, "user_turn", turn(["anyway"], built.now));
+  assert.match(history(built.llm), /new-0/);
+  assert.doesNotMatch(history(built.llm), /old-0/, "the topic window drops what came before it");
+
+  const fresh = mk(1);
+  await respond(fresh.deps, fresh.convId, "user_turn", turn(["anyway"], fresh.now));
+  assert.match(history(fresh.llm), /new-0/);
+  assert.match(history(fresh.llm), /old-0/, "a one-message-old topic must not blank out the conversation behind it");
+});

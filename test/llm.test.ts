@@ -93,10 +93,10 @@ test("4xx (non-429) is not retried; exhausting retries throws", async () => {
 
 test("prompt: persona, plan, history roles, follow-up framing", () => {
   const rick = loadProfiles("characters").get("rick")!;
-  const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55 }), messageCount: 2 };
+  const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, openThreadThreshold: 0.55 }), messageCount: 2 };
   const msgs = buildPrompt({
     profile: rick, decision, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: "portal gun",
-    recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], styles: [{ lowercase: false, typo: false, correct: false }, { lowercase: false, typo: false, correct: false }],
+    recent: [{ role: "user", text: "sup" }, { role: "bot", text: "what" }], turn: ["my boss quit"], keptPending: [], examples: [], askAbout: [], styles: [{ lowercase: false, typo: false, correct: false }, { lowercase: false, typo: false, correct: false }],
   });
   assert.equal(msgs[0].role, "system");
   assert.match(msgs[0].content, /Rick Sanchez/);
@@ -108,7 +108,7 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   // the per-message budget comes from the character's own ceiling, scaled by Jev's length class
   const short = buildPrompt({
     profile: rick, decision: { ...decision, messageCount: 3, messageLength: "terse" }, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null,
-    recent: [], turn: ["sup"], keptPending: [], styles: [],
+    recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], styles: [],
   });
   const budget = Math.max(20, Math.round(rick.speechStyle.maxCharsPerMessage * 0.12)); // 20-char floor
   assert.match(short[0].content, new RegExp(`under about ${budget} characters`));
@@ -116,19 +116,19 @@ test("prompt: persona, plan, history roles, follow-up framing", () => {
   assert.match(short[0].content, /exactly 3 message/);
   const long = buildPrompt({
     profile: rick, decision: { ...decision, messageCount: 1, messageLength: "long" }, trigger: "user_turn", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null,
-    recent: [], turn: ["sup"], keptPending: [], styles: [],
+    recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], styles: [],
   });
   assert.match(long[0].content, new RegExp(`under about ${rick.speechStyle.maxCharsPerMessage} characters`));
 
-  const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], styles: [] });
+  const fu = buildPrompt({ profile: rick, decision, trigger: "followup_due", activity: "idle", mood: "neutral", localTime: "Thu 04:00", topic: null, recent: [], turn: [], keptPending: [], examples: [], askAbout: [], styles: [] });
   assert.equal(fu.length, 1);
   assert.match(fu[0].content, /on your own/);
 });
 
 const PROMPT_CTX = () => {
   const rick = loadProfiles("characters").get("rick")!;
-  const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55 }), messageCount: 1 };
-  return { rick, base: { profile: rick, decision, trigger: "user_turn" as const, activity: "idle" as const, localTime: "Thu 04:00", topic: null, recent: [], turn: ["sup"], keptPending: [], styles: [] } };
+  const decision = { ...decide(null, { trigger: "user_turn", pendingIds: [], basePace: "fast", maxMessages: 3, choiceMargin: 1.2, scoreConfidence: 0.4, noulThreshold: 0.7, followUpThreshold: 0.55, openThreadThreshold: 0.55 }), messageCount: 1 };
+  return { rick, base: { profile: rick, decision, trigger: "user_turn" as const, activity: "idle" as const, localTime: "Thu 04:00", topic: null, recent: [], turn: ["sup"], keptPending: [], examples: [], askAbout: [], styles: [] } };
 };
 
 test("prompt: the authored character and the current mood reach the model", () => {
@@ -141,6 +141,25 @@ test("prompt: the authored character and the current mood reach the model", () =
   assert.match(neutral, /intelligence 10\/10, patience 2\/10/);
   assert.doesNotMatch(neutral, /feeling/, "a neutral mood is not a mood, and saying so is noise");
   assert.match(buildPrompt({ ...base, mood: "annoyed" })[0].content, /feeling annoyed right now/);
+});
+
+test("prompt: examples are labelled as speech, and open threads are only raised on ask", () => {
+  const { base } = PROMPT_CTX();
+  const example = { id: "e1", characterId: "rick", episode: "3", emotion: "joking" as const, lines: [{ speaker: "rick", text: "nobody exists on purpose" }] };
+
+  const none = buildPrompt({ ...base, mood: "neutral" })[0].content;
+  assert.doesNotMatch(none, /Here is how Rick talks/, "a character with no examples gets no block");
+
+  const withExample = buildPrompt({ ...base, mood: "neutral", examples: [example] })[0].content;
+  assert.match(withExample, /Here is how Rick talks — lines of them, spoken not typed/);
+  assert.match(withExample, /RICK: nobody exists on purpose/);
+  assert.match(withExample, /Never the format, never the speaker labels/);
+
+  // an open thread is only voiced when the decision asked about it — otherwise it is not this turn's business
+  assert.doesNotMatch(withExample, /meaning to ask them about/);
+  assert.match(buildPrompt({ ...base, mood: "neutral", askAbout: ["interview tomorrow"] })[0].content, /meaning to ask them about: interview tomorrow\. Ask them now\./);
+  // the thread summary is about *this* message: "they mentioned" made the model summarise the open topic
+  assert.match(none, /If this message mentioned something you will want to ask about later/);
 });
 
 test("prompt: a tic already used in this conversation drops off the list", () => {

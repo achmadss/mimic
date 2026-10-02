@@ -1,4 +1,4 @@
-import { MESSAGE_LENGTHS, MOODS, PACES, PENDING_DECISIONS, RESPOND_MODES, TOPIC_ACTIONS, type BehaviorDecision, type Pace, type RespondMode, type Trigger } from "../types.ts";
+import { EMOTIONS, MESSAGE_LENGTHS, MOODS, PACES, PENDING_DECISIONS, RESPOND_MODES, TOPIC_ACTIONS, type BehaviorDecision, type Pace, type RespondMode, type Trigger } from "../types.ts";
 import type { JevAnswers } from "./client.ts";
 
 export interface DecideContext {
@@ -10,6 +10,7 @@ export interface DecideContext {
   scoreConfidence: number;
   noulThreshold: number;
   followUpThreshold: number;
+  openThreadThreshold: number;
 }
 
 export const FOLLOW_UP_MS = { "15m": 15 * 60_000, "1h": 3_600_000, "3h": 3 * 3_600_000, next_day: 18 * 3_600_000 } as const;
@@ -46,6 +47,9 @@ export function decide(answers: JevAnswers | null, c: DecideContext): BehaviorDe
   // expire on its own TTL, instead of being reset every turn. Read only on a user turn, which is
   // the one trigger that asks for it — a decision must never read an answer nobody requested.
   const mood = c.trigger === "user_turn" ? choice("mood", MOODS, "neutral") : "neutral";
+  // Both are read on a user turn only, the one trigger that asks for them: a decision must never
+  // read an answer nobody requested.
+  const emotion = c.trigger === "user_turn" ? choice("turn_emotion", EMOTIONS, "neutral") : undefined;
 
   return {
     respondMode,
@@ -56,6 +60,8 @@ export function decide(answers: JevAnswers | null, c: DecideContext): BehaviorDe
     messageLength: generating ? choice("message_length", MESSAGE_LENGTHS, "normal") : "normal",
     mood: mood === "neutral" ? undefined : mood,
     askQuestion: generating && yes("ask_question"),
+    emotion,
+    openThread: c.trigger === "user_turn" && yes("opens_thread", c.openThreadThreshold),
     attentionRaise: generating && imp?.type === "score" && imp.confidence >= c.scoreConfidence && imp.score >= 2 ? imp.score / 3 : undefined,
     // a stale reply is worse than a missing one: unsure → cancel
     pendingActions: c.pendingIds.map((id) => ({ messageId: id, action: choice(`pending_${id}`, PENDING_DECISIONS, "cancel") })),

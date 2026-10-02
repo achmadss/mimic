@@ -106,6 +106,44 @@ test("character state round-trips activity and mood", () => {
   assert.deepEqual(s.getCharacterState("rick", 200), { characterId: "rick", activity: "sleeping", activitySince: 100, mood: "tired", moodChangedAt: 150 });
 });
 
+test("unresolved threads round-trip on the conversation and default to empty", () => {
+  const s = fresh();
+  const c = s.getOrCreateConversation("rick", "cli", "local");
+  assert.deepEqual(c.unresolved, []);
+  const t = { id: "t1", summary: "interview tomorrow", raisedAt: 30 };
+  s.saveConversation({ ...c, unresolved: [t] });
+  assert.deepEqual(s.getConversation(c.conversationId)!.unresolved, [t]);
+});
+
+test("examples are read back by character and emotion, bounded by limit", () => {
+  const s = fresh();
+  const mk = (id: string, characterId: string, emotion: "joking" | "sad") => ({
+    id, characterId, episode: "1", emotion, lines: [{ speaker: characterId, text: id }],
+  });
+  s.saveExample(mk("a", "rick", "joking"));
+  s.saveExample(mk("b", "rick", "joking"));
+  s.saveExample(mk("c", "rick", "sad"));
+  s.saveExample(mk("d", "morty", "joking"));
+  assert.deepEqual(s.examplesFor("rick", "joking", 10).map((e) => e.id), ["a", "b"]);
+  assert.deepEqual(s.examplesFor("rick", "joking", 1).map((e) => e.id), ["a"]);
+  assert.deepEqual(s.examplesFor("rick", "excited", 10), []);
+  assert.equal(s.exampleCount(), 4);
+  assert.equal(s.exampleCount("rick"), 3);
+  // re-running the ingest replaces rather than duplicating
+  s.saveExample({ ...mk("a", "rick", "joking"), emotion: "sad" });
+  assert.equal(s.exampleCount("rick"), 3);
+  assert.deepEqual(s.examplesFor("rick", "sad", 10).map((e) => e.id), ["a", "c"]);
+});
+
+test("recentMessages can be scoped to a `since`", () => {
+  const s = fresh();
+  const id = s.getOrCreateConversation("rick", "cli", "local").conversationId;
+  for (const at of [10, 20, 30, 40]) s.insertUserMessage(`u${at}`, id, `${at}`, at);
+  assert.deepEqual(s.recentMessages(id, 10, 100, 30).map((m) => m.text), ["30", "40"]);
+  assert.deepEqual(s.recentMessages(id, 10, 100, 0).map((m) => m.text), ["10", "20", "30", "40"]);
+  assert.deepEqual(s.recentMessages(id, 2, 35, 0).map((m) => m.text), ["20", "30"]);
+});
+
 test("conversationsForCharacter returns only that character's conversations", () => {
   const s = fresh();
   s.getOrCreateConversation("rick", "cli", "local");
