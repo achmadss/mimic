@@ -117,8 +117,8 @@ test("unresolved threads round-trip on the conversation and default to empty", (
 
 test("examples are read back by character and emotion, bounded by limit", () => {
   const s = fresh();
-  const mk = (id: string, characterId: string, emotion: "joking" | "sad") => ({
-    id, characterId, episode: "1", emotion, lines: [{ speaker: characterId, text: id }],
+  const mk = (id: string, characterId: string, emotion: "joking" | "sad", secondary: ("neutral" | "sad")[] = []) => ({
+    id, characterId, episode: "1", emotion, secondary, lines: [{ speaker: characterId, text: id }],
   });
   s.saveExample(mk("a", "rick", "joking"));
   s.saveExample(mk("b", "rick", "joking"));
@@ -133,6 +133,17 @@ test("examples are read back by character and emotion, bounded by limit", () => 
   s.saveExample({ ...mk("a", "rick", "joking"), emotion: "sad" });
   assert.equal(s.exampleCount("rick"), 3);
   assert.deepEqual(s.examplesFor("rick", "sad", 10).map((e) => e.id), ["a", "c"]);
+
+  // a secondary tag puts it in that bucket too, but behind every primary match
+  s.saveExample(mk("0", "rick", "joking", ["sad", "neutral"]));
+  assert.deepEqual(s.examplesFor("rick", "sad", 10).map((e) => e.id), ["a", "c", "0"]);
+  assert.deepEqual(s.examplesFor("rick", "sad", 2).map((e) => e.id), ["a", "c"]);
+  assert.deepEqual(s.examplesFor("rick", "neutral", 10).map((e) => e.id), ["0"]);
+  assert.deepEqual(s.examplesFor("rick", "neutral", 10)[0].secondary, ["sad", "neutral"]);
+
+  assert.equal(s.pruneExamples("rick", new Set(["a", "0"])), 2);
+  assert.deepEqual(s.examplesFor("rick", "sad", 10).map((e) => e.id), ["a", "0"]);
+  assert.equal(s.exampleCount("morty"), 1, "another character's rows are untouched");
 });
 
 test("recentMessages can be scoped to a `since`", () => {

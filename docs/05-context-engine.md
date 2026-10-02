@@ -303,8 +303,12 @@ who has to repeat something they said days ago. Until then every question the
 planner would ask has one answer, and a question with one answer is not a
 judgement.
 
-**Still open.** the example buckets for `neutral` and `sad` are thin (3–5 each
-against 213 `joking` for Rick), because Jev rarely calls an exchange neutral. A
-turn Jev calls neutral therefore draws from a small pool. If that turns out to
-sound wrong, the fix is at ingest — ask for a second tag, or rebalance — not at
-retrieval.
+**Fixed: thin buckets.** `neutral` and `sad` held 3–5 examples each against 213
+`joking` for Rick, because the show has almost no calm scenes and Jev's argmax
+almost never lands there. The fix was at ingest, as planned: every emotion Jev
+gives ≥ 0.15 probability is stored as a `secondary` tag, retrieval matches either
+tag with primary matches first, and the ingest takes the whole show instead of
+400 exchanges per character. `neutral` now draws from 17–34, `sad` from 17–26.
+The ingest also strips dialogue dashes, skips spans where a stage direction runs
+into the speech with no sentence break, and prunes rows the cut no longer
+produces (only after a run with no failed batch).

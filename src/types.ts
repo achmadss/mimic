@@ -35,6 +35,8 @@ export interface Example {
   characterId: string;
   episode: string;
   emotion: Emotion;
+  /** Other registers Jev gave real weight to. How a show with few calm scenes still fills `neutral`. */
+  secondary: Emotion[];
   lines: ExampleLine[];
 }
 

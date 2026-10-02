@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cutExchanges, exchangeId, normalizeSpeaker, parseCsv, readTags, renderExchange, speaksAs, spokenText, transcriptLines } from "../src/context/ingest.ts";
+import { cutExchanges, exchangeId, narrated, normalizeSpeaker, parseCsv, readTags, renderExchange, speaksAs, spokenText, transcriptLines } from "../src/context/ingest.ts";
 
 const HEADER = ",episode no.,speaker,dialouge";
 const csv = (...rows: string[]) => [HEADER, ...rows].join("\n");
@@ -83,7 +83,26 @@ test("a span that repeats verbatim in the same episode is stored once", () => {
 });
 
 test("readTags takes the Choice, and an unanswerable batch falls back to neutral", () => {
-  assert.deepEqual(readTags({ e0_emotion: { type: "choice", choice: "joking", confidence: 0.9, probabilities: {} } }, 0), { emotion: "joking" });
-  assert.deepEqual(readTags({ e0_emotion: { type: "choice", choice: "ecstatic", confidence: 0.9, probabilities: {} } }, 0), { emotion: "neutral" });
-  assert.deepEqual(readTags({}, 0), { emotion: "neutral" });
+  assert.deepEqual(readTags({ e0_emotion: { type: "choice", choice: "joking", confidence: 0.9, probabilities: {} } }, 0), { emotion: "joking", secondary: [] });
+  assert.deepEqual(readTags({ e0_emotion: { type: "choice", choice: "ecstatic", confidence: 0.9, probabilities: {} } }, 0), { emotion: "neutral", secondary: [] });
+  assert.deepEqual(readTags({}, 0), { emotion: "neutral", secondary: [] });
+});
+
+test("readTags keeps every other emotion at or above the floor as secondary", () => {
+  const probabilities = { joking: 0.39, neutral: 0.34, serious: 0.15, sad: 0.12 };
+  const got = readTags({ e0_emotion: { type: "choice", choice: "joking", confidence: 0.39, probabilities } }, 0);
+  assert.deepEqual(got, { emotion: "joking", secondary: ["neutral", "serious"] });
+});
+
+test("dialogue dashes are stripped, and a span with narration fused into speech is skipped", () => {
+  assert.equal(spokenText("-We know."), "We know.");
+  assert.equal(spokenText("Fine. -Got it."), "Fine. Got it.");
+  assert.equal(spokenText("- What?! -"), "What?! -");
+  assert.equal(spokenText("a well-known fact"), "a well-known fact");
+  assert.ok(narrated("puts an arm around Jacob's shoulders The way we see it."));
+  assert.ok(narrated("amazed Wow!"));
+  assert.ok(!narrated("eh, whatever."));
+  assert.ok(!narrated("Morty, come on."));
+  const fused = csv("0,1,Rick,one", "1,1,Morty,two", "2,1,Rick,amazed Wow!", "3,1,Morty,four", "4,1,Rick,five", "5,1,Morty,six");
+  assert.deepEqual(cutExchanges(transcriptLines(fused), ["rick"]), []);
 });

@@ -59,7 +59,8 @@ export function spokenText(raw: string): string {
     raw
       .replace(/<[^>]+>/g, " ")
       .replace(/\([^)]*\)/g, " ") // parenthetical asides: "( cut back to the present, Rick grunts )"
-      .replace(/^:\s*/, ""),     // the speaker is sometimes split as `Rick` + `: line`
+      .replace(/^:\s*/, "")      // the speaker is sometimes split as `Rick` + `: line`
+      .replace(/(^|\s)-(?=[A-Za-z"'])/g, "$1"), // overlapping-dialogue dashes: "-We know."
   );
   let best: string[] = [];
   let run: string[] = [];
@@ -73,7 +74,8 @@ export function spokenText(raw: string): string {
   if (run.length > best.length) best = run;
   // trim only, never empty a line: a short all-lowercase text ("eh, whatever.") is speech the
   // capitalization rule cannot recognise, and losing it is worse than keeping one stray direction
-  return collapse(best.length ? best.join(" ") : clean);
+  // a leading dash is a continuation marker; a trailing one is a cut-off, which is speech
+  return collapse(best.length ? best.join(" ") : clean).replace(/^-+\s*/, "");
 }
 
 /** Rows with no usable dialogue are dropped; the header is located, not assumed. */
@@ -105,6 +107,15 @@ export function speaksAs(speaker: string, characterId: string): boolean {
   return normalizeSpeaker(speaker).split(" ").includes(characterId.toLowerCase());
 }
 
+/**
+ * A direction run straight into the speech with no sentence break: "puts an arm around Jacob's
+ * shoulders The way we see it". The names inside the direction make the boundary unrecoverable, so
+ * the line is not cut — its span is skipped. 47 of 9486 lines.
+ */
+export function narrated(text: string): boolean {
+  return /^[a-z][a-z,']*( [a-z,']+)* [A-Z]/.test(text);
+}
+
 const spanKey = (span: TranscriptLine[]) =>
   span.map((l) => `${normalizeSpeaker(l.speaker)}:${collapse(l.text).toLowerCase()}`).join("|");
 
@@ -122,6 +133,7 @@ export function cutExchanges(lines: TranscriptLine[], characterIds: string[]): E
     while (runEnd < lines.length && lines[runEnd].episode === lines[runStart].episode) runEnd++;
     for (let i = runStart; i + EXCHANGE_SPAN <= runEnd; i += EXCHANGE_SPAN) {
       const span = lines.slice(i, i + EXCHANGE_SPAN);
+      if (span.some((l) => narrated(l.text))) continue;
       const key = `${span[0].episode}:${spanKey(span)}`;
       for (const characterId of characterIds) {
         if (span.filter((l) => speaksAs(l.speaker, characterId)).length < MIN_TARGET_LINES) continue;
@@ -172,9 +184,18 @@ export function taggingQuestions(index: number, lines: ExampleLine[]): Record<st
   };
 }
 
-/** The Choice's argmax, or `neutral` when Jev did not answer. */
-export function readTags(answers: JevAnswers, index: number): { emotion: Emotion } {
+/**
+ * Measured over 36 exchanges: `neutral` was the argmax of none and `sad` of one, so those buckets
+ * held 3-5 examples each. But Jev gave `neutral` 0.20-0.34 and `sad` 0.17-0.44 on a handful more.
+ * Anything at or above this floor is a register the exchange also reads as.
+ */
+const SECONDARY_FLOOR = 0.15;
+
+/** The Choice's argmax, or `neutral` when Jev did not answer; plus every other emotion above the floor. */
+export function readTags(answers: JevAnswers, index: number): { emotion: Emotion; secondary: Emotion[] } {
   const a = answers[`e${index}_emotion`];
-  const c = a?.type === "choice" ? a.choice : "";
-  return { emotion: (EMOTIONS as readonly string[]).includes(c) ? (c as Emotion) : "neutral" };
+  if (a?.type !== "choice" || !(EMOTIONS as readonly string[]).includes(a.choice)) return { emotion: "neutral", secondary: [] };
+  const emotion = a.choice as Emotion;
+  const secondary = EMOTIONS.filter((e) => e !== emotion && (a.probabilities[e] ?? 0) >= SECONDARY_FLOOR);
+  return { emotion, secondary };
 }

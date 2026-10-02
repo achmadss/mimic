@@ -145,7 +145,7 @@ test("prompt: the authored character and the current mood reach the model", () =
 
 test("prompt: examples are labelled as speech, and open threads are only raised on ask", () => {
   const { base } = PROMPT_CTX();
-  const example = { id: "e1", characterId: "rick", episode: "3", emotion: "joking" as const, lines: [{ speaker: "rick", text: "nobody exists on purpose" }] };
+  const example = { id: "e1", characterId: "rick", episode: "3", emotion: "joking" as const, secondary: [], lines: [{ speaker: "rick", text: "nobody exists on purpose" }] };
 
   const none = buildPrompt({ ...base, mood: "neutral" })[0].content;
   assert.doesNotMatch(none, /Here is how Rick talks/, "a character with no examples gets no block");

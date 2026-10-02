@@ -35,7 +35,7 @@ test("a new topic keeps a floor of history instead of blanking the conversation"
 });
 
 const example = (id: string, emotion: Example["emotion"] = "joking"): Example => ({
-  id, characterId: "rick", episode: "3", emotion, lines: [{ speaker: "rick", text: id }],
+  id, characterId: "rick", episode: "3", emotion, secondary: [], lines: [{ speaker: "rick", text: id }],
 });
 
 test("example selection is seeded: stable for a seed, different across seeds", () => {

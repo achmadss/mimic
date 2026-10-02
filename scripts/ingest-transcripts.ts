@@ -34,17 +34,17 @@ async function pool<T>(items: T[], concurrency: number, fn: (item: T, index: num
   );
 }
 
-async function tagBatch(jev: JevClient, character: string, batch: Exchange[]): Promise<{ exchange: Exchange; emotion: Emotion }[]> {
+async function tagBatch(jev: JevClient, character: string, batch: Exchange[]): Promise<{ exchange: Exchange; emotion: Emotion; secondary: Emotion[] }[]> {
   const questions = Object.assign({}, ...batch.map((e, i) => taggingQuestions(i, e.lines)));
   const answers = await jev.ask({ task: "tag_dialogue_exchange", character }, questions);
-  return batch.map((e, i) => ({ exchange: e, emotion: readTags(answers, i).emotion }));
+  return batch.map((e, i) => ({ exchange: e, ...readTags(answers, i) }));
 }
 
 async function main() {
   const store = new Store(openDb(process.env.DB_PATH ?? "mimic.db"));
   const profiles = loadProfiles("characters");
   const csvPath = arg("csv") ?? DEFAULT_CSV;
-  const limit = num("limit", 400);
+  const limit = num("limit", 2000); // every exchange: the rare registers need the whole show
   const batchSize = num("batch", 4);
   const concurrency = num("concurrency", 4);
   const dry = process.argv.includes("--dry");
@@ -84,12 +84,13 @@ async function main() {
     try {
       const tagged = await tagBatch(jev, name, batch);
       store.tx(() => {
-        for (const { exchange, emotion } of tagged) {
+        for (const { exchange, emotion, secondary } of tagged) {
           store.saveExample({
             id: exchangeId(exchange),
             characterId: exchange.characterId,
             episode: exchange.episode,
             emotion,
+            secondary,
             lines: exchange.lines,
           });
         }
@@ -102,6 +103,13 @@ async function main() {
     if (++done % 10 === 0) console.error(`[ingest] ${done}/${batches.length} batches, ${failed} failed`);
   });
 
+  // only after a clean run: a failed batch's rows are still the best copy of those exchanges
+  if (failed === 0 && !arg("limit")) {
+    for (const [id, list] of byCharacter) {
+      const n = store.pruneExamples(id, new Set(list.map(exchangeId)));
+      if (n) console.error(`[ingest] ${id}: pruned ${n} examples the cut no longer produces`);
+    }
+  }
   for (const id of profiles.keys()) console.error(`[ingest] ${id}: ${store.exampleCount(id)} examples stored`);
 }
 

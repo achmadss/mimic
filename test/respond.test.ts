@@ -172,7 +172,7 @@ test("dropping every generated line still leaves the queued ones on their way", 
 });
 
 const example = (id: string, emotion: "joking" | "sad" = "joking") => ({
-  id, characterId: "rick", episode: "1", emotion, lines: [{ speaker: "rick", text: id }],
+  id, characterId: "rick", episode: "1", emotion, secondary: [], lines: [{ speaker: "rick", text: id }],
 });
 
 test("examples reach the prompt for the turn's register, and never on a follow-up", async () => {

@@ -23,6 +23,7 @@ const toExample = (r: Row): Example => ({
   characterId: r.character_id,
   episode: r.episode,
   emotion: r.emotion,
+  secondary: r.secondary ? JSON.parse(r.secondary) : [],
   lines: JSON.parse(r.lines),
 });
 
@@ -87,17 +88,34 @@ export class Store {
   /** Offline content, written only by the ingest script. Re-running it replaces by id. */
   saveExample(e: Example) {
     this.db
-      .prepare("INSERT OR REPLACE INTO examples (id, character_id, episode, emotion, lines) VALUES (?, ?, ?, ?, ?)")
-      .run(e.id, e.characterId, e.episode, e.emotion, JSON.stringify(e.lines));
+      .prepare("INSERT OR REPLACE INTO examples (id, character_id, episode, emotion, secondary, lines) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(e.id, e.characterId, e.episode, e.emotion, JSON.stringify(e.secondary), JSON.stringify(e.lines));
   }
 
-  /** The candidate pool for one emotion, bounded by `limit` — the seeded pick happens over this. */
+  /**
+   * The candidate pool for one emotion, bounded by `limit` — the seeded pick happens over this.
+   * Primary matches fill the pool first; a secondary match only fills what is left.
+   */
   examplesFor(characterId: string, emotion: Emotion, limit: number): Example[] {
     return (
       this.db
-        .prepare("SELECT * FROM examples WHERE character_id = ? AND emotion = ? ORDER BY id LIMIT ?")
-        .all(characterId, emotion, limit) as Row[]
+        .prepare(
+          `SELECT * FROM examples WHERE character_id = ?
+             AND (emotion = ? OR EXISTS (SELECT 1 FROM json_each(examples.secondary) WHERE value = ?))
+           ORDER BY emotion != ?, id LIMIT ?`,
+        )
+        .all(characterId, emotion, emotion, emotion, limit) as Row[]
     ).map(toExample);
+  }
+
+  /** Drops a character's examples the current cut no longer produces. Returns how many went. */
+  pruneExamples(characterId: string, keep: Set<string>): number {
+    const stale = (this.db.prepare("SELECT id FROM examples WHERE character_id = ?").all(characterId) as Row[])
+      .map((r) => r.id as string)
+      .filter((id) => !keep.has(id));
+    const del = this.db.prepare("DELETE FROM examples WHERE id = ?");
+    this.tx(() => stale.forEach((id) => del.run(id)));
+    return stale.length;
   }
 
   exampleCount(characterId?: string): number {
