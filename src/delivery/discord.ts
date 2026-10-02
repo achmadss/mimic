@@ -7,6 +7,15 @@ export function discordNonce(key: string): string {
   return key.replace(/-/g, "").slice(0, 25);
 }
 
+/**
+ * How people reach the bot. A user can only DM a bot they share a server with — a user-installed
+ * app covers commands, not open DMs — so the bot joins a server with the `bot` scope and no
+ * permissions: it never acts in the server, it is only there to be found.
+ */
+export function inviteUrl(applicationId: string): string {
+  return `https://discord.com/oauth2/authorize?client_id=${applicationId}&scope=bot&permissions=0`;
+}
+
 export function toIncoming(msg: { author: { bot: boolean }; channel: { type: ChannelType }; channelId: string; id: string; content: string }): IncomingText | null {
   if (msg.author.bot || msg.channel.type !== ChannelType.DM || !msg.content.trim()) return null;
   return { chatId: msg.channelId, platformMessageId: msg.id, text: msg.content };
@@ -27,6 +36,9 @@ export class DiscordAdapter implements DeliveryAdapter {
     this.client.on(Events.MessageCreate, (msg) => {
       const m = toIncoming(msg);
       if (m) onMessage(m);
+    });
+    this.client.once(Events.ClientReady, (c) => {
+      console.error(`[mimic] discord: people can DM ${c.user.tag} once it shares a server with them. Add it: ${inviteUrl(c.user.id)}`);
     });
     await this.client.login(this.token);
   }

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ChannelType } from "discord.js";
-import { DiscordAdapter, discordNonce, toIncoming } from "../src/delivery/discord.ts";
+import { DiscordAdapter, discordNonce, inviteUrl, toIncoming } from "../src/delivery/discord.ts";
 
 const msg = (over: Record<string, unknown> = {}) =>
   ({ author: { bot: false }, channel: { type: ChannelType.DM }, channelId: "c1", id: "m1", content: "hey", ...over }) as any;
@@ -42,4 +42,8 @@ test("setPresence mirrors availability onto the bot account", () => {
   // a client that has not finished logging in has no user yet, and that must not throw
   (a.client as any).user = null;
   a.setPresence("idle");
+});
+
+test("the invite link adds the bot to a server with no permissions", () => {
+  assert.equal(inviteUrl("123"), "https://discord.com/oauth2/authorize?client_id=123&scope=bot&permissions=0");
 });

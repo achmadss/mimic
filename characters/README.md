@@ -90,6 +90,11 @@ forever, which is why the field is required.
 
 - `language` is `"en"` only for now.
 - DMs only. Group chats are ignored.
+- **Reaching a Discord bot.** Discord only lets someone DM a bot they share a
+  server with. On boot the bot logs an invite link (`scope=bot`, no
+  permissions); add it to any server your users are in, and they can open its
+  profile and message it. It never posts in the server, and it needs no
+  privileged intents: DM content reaches bots without Message Content.
 - `persona` is required to be at least 20 characters and `background` at least
   10, so a stub cannot load by accident. They are not a substitute for the
   structured fields — a `persona` alone gives you a description, and it is
