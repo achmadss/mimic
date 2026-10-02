@@ -10,6 +10,11 @@ services:
     env_file:
       - path: .env
         required: false
+    # wins over .env: a DB_PATH left there from an older setup would put the database in the
+    # container, where every rebuild wipes it
+    environment:
+      DB_PATH: data/mimic.db
+      MIMIC_CONFIG: data/mimic.config.json
     volumes:
       - ./characters:/app/characters
       - ./data:/app/data
