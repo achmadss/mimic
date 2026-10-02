@@ -5,10 +5,10 @@ import { InteractionContextType } from "discord.js";
 import { commandIncoming, DiscordAdapter, discordNonce, inviteUrl, SLASH_COMMANDS, toIncoming } from "../src/delivery/discord.ts";
 
 const msg = (over: Record<string, unknown> = {}) =>
-  ({ author: { bot: false }, channel: { type: ChannelType.DM }, channelId: "c1", id: "m1", content: "hey", ...over }) as any;
+  ({ author: { bot: false, username: "sam" }, channel: { type: ChannelType.DM }, channelId: "c1", id: "m1", content: "hey", ...over }) as any;
 
 test("only human DMs with text are forwarded", () => {
-  assert.deepEqual(toIncoming(msg()), { chatId: "c1", platformMessageId: "m1", text: "hey" });
+  assert.deepEqual(toIncoming(msg()), { chatId: "c1", platformMessageId: "m1", text: "hey", name: "sam" });
   assert.equal(toIncoming(msg({ author: { bot: true } })), null);
   assert.equal(toIncoming(msg({ channel: { type: ChannelType.GuildText } })), null);
   assert.equal(toIncoming(msg({ content: "  " })), null);

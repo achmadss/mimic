@@ -27,6 +27,8 @@ export interface RegistryOptions {
   onStart: (characterId: string, platform: Platform, adapter: DeliveryAdapter) => Promise<void> | void;
   /** Before an adapter goes away: disarm its conversations' timers. */
   onStop: (characterId: string, platform: Platform) => void;
+  /** A bot that would not start: a rejected token, a network error. */
+  onFail?: (characterId: string, platform: Platform, error: string) => void;
   log: (msg: string, err?: unknown) => void;
 }
 
@@ -98,6 +100,7 @@ export class AdapterRegistry {
       } catch (e) {
         this.errors.set(k, e instanceof Error ? e.message : String(e));
         this.o.log(`${characterId} could not start on ${platform}`, e);
+        this.o.onFail?.(characterId, platform, this.errors.get(k)!);
         await adapter.stop().catch(() => {});
         continue;
       }

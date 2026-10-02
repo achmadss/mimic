@@ -66,10 +66,15 @@ const adapters = new AdapterRegistry({
   create: (platform, token) => (platform === "telegram" ? new TelegramAdapter(token) : new DiscordAdapter(token)),
   receive: (characterId, platform, m) => im.receive(characterId, platform, m),
   onStart: async (characterId, platform, adapter) => {
+    store.appendEvent(`character:${characterId}`, realClock.now(), "PLATFORM_STARTED", { platform });
     adapter.setPresence?.(presenceOf(characterId));
     await im.adopt(characterId, platform);
   },
-  onStop: (characterId, platform) => im.release(characterId, platform),
+  onStop: (characterId, platform) => {
+    store.appendEvent(`character:${characterId}`, realClock.now(), "PLATFORM_STOPPED", { platform });
+    im.release(characterId, platform);
+  },
+  onFail: (characterId, platform, error) => store.appendEvent(`character:${characterId}`, realClock.now(), "PLATFORM_FAILED", { platform, error }),
   log,
 });
 

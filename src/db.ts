@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS events (
   type TEXT NOT NULL,
   payload TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS events_conv ON events (conversation_id, seq);
 -- API keys, bot tokens and model choices, set from the dashboard. Kept here, not in .env.
 CREATE TABLE IF NOT EXISTS settings (
   name TEXT PRIMARY KEY,
@@ -91,6 +92,7 @@ const MIGRATIONS: [table: string, column: string, type: string][] = [
   ["examples", "secondary", "TEXT"],
   ["conversations", "summarized_until", "INTEGER NOT NULL DEFAULT 0"],
   ["conversations", "person_id", "TEXT"],
+  ["conversations", "name", "TEXT"],
 ];
 
 export function openDb(path: string): DB {

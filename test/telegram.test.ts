@@ -21,7 +21,7 @@ test("private text messages are forwarded; group messages are ignored", async ()
   await a.start((m) => got.push(m));
   await a.bot.handleUpdate(update("private"));
   await a.bot.handleUpdate(update("group", "hi all", 8));
-  assert.deepEqual(got, [{ chatId: "123", platformMessageId: "7", text: "hey" }]);
+  assert.deepEqual(got, [{ chatId: "123", platformMessageId: "7", text: "hey", name: "U" }]);
 });
 
 test("bot commands are flagged as commands, never passed on as conversation", async () => {

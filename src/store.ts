@@ -82,8 +82,24 @@ export class Store {
     ).map((r) => ({ seq: r.seq, at: r.at, type: r.type, payload: JSON.parse(r.payload) }));
   }
 
+  /**
+   * A character's log, newest first: every chat with them plus their own routine (`character:<id>`),
+   * or one chat's when `conversationId` is given. `before` pages back by `seq`.
+   */
+  characterEvents(characterId: string, conversationId: string | null, limit: number, before = Number.MAX_SAFE_INTEGER) {
+    const rows = (
+      conversationId
+        ? this.db.prepare("SELECT * FROM events WHERE conversation_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?").all(conversationId, before, limit)
+        : // `rick:` up to `rick;` is every `rick:<platform>:<chat>` id, and keeps to the index
+          this.db
+            .prepare("SELECT * FROM events WHERE (conversation_id = ? OR (conversation_id >= ? AND conversation_id < ?)) AND seq < ? ORDER BY seq DESC LIMIT ?")
+            .all(`character:${characterId}`, `${characterId}:`, `${characterId};`, before, limit)
+    ) as Row[];
+    return rows.map((r) => ({ seq: r.seq as number, conversationId: r.conversation_id as string, at: r.at as number, type: r.type as string, payload: JSON.parse(r.payload) }));
+  }
+
   /** Every conversation with its message count, most recently active first. */
-  listConversations(): (ConversationState & { messageCount: number })[] {
+  listConversations(): (ConversationState & { messageCount: number; name: string | null })[] {
     return (
       this.db
         .prepare(
@@ -91,7 +107,7 @@ export class Store {
            FROM conversations c ORDER BY MAX(c.last_user_at, c.last_bot_at) DESC`,
         )
         .all() as Row[]
-    ).map((r) => ({ ...toConversation(r), messageCount: r.message_count }));
+    ).map((r) => ({ ...toConversation(r), messageCount: r.message_count, name: r.name ?? null }));
   }
 
   deleteMemory(id: string): boolean {
@@ -143,11 +159,15 @@ export class Store {
     this.db.prepare("UPDATE conversations SET summarized_until = 0 WHERE id = ?").run(conversationId);
   }
 
-  getOrCreateConversation(characterId: string, platform: Platform, chatId: string): ConversationState {
+  /** `name` is who it is with, refreshed whenever they write (they can rename themselves). */
+  getOrCreateConversation(characterId: string, platform: Platform, chatId: string, name?: string): ConversationState {
     const id = `${characterId}:${platform}:${chatId}`;
     this.db
-      .prepare("INSERT OR IGNORE INTO conversations (id, character_id, platform, chat_id) VALUES (?, ?, ?, ?)")
-      .run(id, characterId, platform, chatId);
+      .prepare(
+        `INSERT INTO conversations (id, character_id, platform, chat_id, name) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET name = COALESCE(excluded.name, name)`,
+      )
+      .run(id, characterId, platform, chatId, name ?? null);
     return this.getConversation(id)!;
   }
 

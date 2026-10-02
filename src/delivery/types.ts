@@ -4,6 +4,8 @@ export interface IncomingText {
   chatId: string;
   platformMessageId: string;
   text: string;
+  /** Who sent it (@username or display name), so the dashboard can tell chats apart. */
+  name?: string;
   /** Set when the platform says this is a command addressed to the bot, not to the character. */
   command?: string;
   /** How to answer the command, where the platform needs its own channel for it (Discord interactions). */

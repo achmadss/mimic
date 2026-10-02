@@ -102,6 +102,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
     answers = await d.ai(conv.characterId).jev.ask(state, buildQuestions(trigger, pending, open));
   } catch (e) {
     d.log("jev unavailable, using defaults", e);
+    store.appendEvent(conversationId, clock.now(), "JEV_FAILED", { error: String(e), using: "defaults" });
   }
   const decision = decide(answers, {
     trigger,

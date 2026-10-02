@@ -237,6 +237,28 @@ test("link and unlink two chats from the dashboard", async () => {
   }
 });
 
+test("logs: one character's events, everyone or one person, never another character's", async () => {
+  const d = await boot();
+  try {
+    const sam = d.t.store.getOrCreateConversation("rick", "telegram", "1", "@sam").conversationId;
+    const ann = d.t.store.getOrCreateConversation("rick", "discord", "9", "ann").conversationId;
+    const mt = d.t.store.getOrCreateConversation("morty", "telegram", "1").conversationId;
+    d.t.store.appendEvent(sam, 1, "USER_MESSAGE_RECEIVED", { text: "hi" });
+    d.t.store.appendEvent(ann, 2, "JEV_FAILED", { error: "x" });
+    d.t.store.appendEvent(mt, 3, "USER_MESSAGE_RECEIVED", { text: "not rick" });
+    d.t.store.appendEvent("character:rick", 4, "PLATFORM_STARTED", { platform: "telegram" });
+
+    const all = (await d.call("GET", "/api/characters/rick/logs")).body;
+    assert.deepEqual(all.events.filter((e: any) => e.at <= 4).map((e: any) => e.type), ["PLATFORM_STARTED", "JEV_FAILED", "USER_MESSAGE_RECEIVED"]);
+    assert.deepEqual(all.people.map((p: any) => p.name).sort(), ["@sam", "ann"]);
+    const one = (await d.call("GET", `/api/characters/rick/logs?c=${encodeURIComponent(sam)}`)).body;
+    assert.deepEqual(one.events.map((e: any) => e.type), ["USER_MESSAGE_RECEIVED"]);
+    assert.equal((await d.call("GET", `/api/characters/rick/logs?c=${encodeURIComponent(mt)}`)).status, 400);
+  } finally {
+    d.close();
+  }
+});
+
 test("model and keys: defaults, per-character overrides, validated, stored in the database, never in .env", async () => {
   const d = await boot();
   try {

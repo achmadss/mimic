@@ -21,7 +21,7 @@ export class TelegramAdapter implements DeliveryAdapter {
   async start(onMessage: (m: IncomingText) => void) {
     this.bot.on("message:text", (ctx) => {
       if (ctx.chat.type !== "private") return; // DMs only
-      const base = { chatId: String(ctx.chat.id), platformMessageId: String(ctx.message.message_id), text: ctx.message.text };
+      const base = { chatId: String(ctx.chat.id), platformMessageId: String(ctx.message.message_id), text: ctx.message.text, name: ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name };
       // A command is addressed to the bot, not the character: it is flagged, never fed to the
       // conversation — otherwise the first thing they ever say is a reply to "/start".
       const cmd = ctx.message.entities?.[0];

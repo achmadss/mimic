@@ -94,7 +94,7 @@ function saveProfile(d: DashboardDeps, p: CharacterProfile) {
 
 const ALLOWED_COMMANDS = new Set(["forget", "reset"]);
 
-async function route(d: DashboardDeps, method: string, path: string, body: unknown): Promise<unknown> {
+async function route(d: DashboardDeps, method: string, path: string, body: unknown, query = new URLSearchParams()): Promise<unknown> {
   const now = d.clock.now();
   let m: RegExpMatchArray | null;
 
@@ -125,6 +125,18 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
     const p = d.profiles.get(m[1]);
     if (!p) throw new HttpError(404, "no such character");
     return { profile: p, platforms: platformsOf(p, d), ai: aiStatus(get(d), p.characterId) };
+  }
+
+  if (method === "GET" && (m = path.match(/^\/api\/characters\/([a-z0-9_]+)\/logs$/))) {
+    const id = m[1];
+    if (!d.profiles.has(id)) throw new HttpError(404, "no such character");
+    const c = query.get("c") || null;
+    if (c && !c.startsWith(`${id}:`)) throw new HttpError(400, `that chat is not ${id}'s`);
+    const before = Number(query.get("before")) || undefined;
+    return {
+      people: d.store.listConversations().filter((x) => x.characterId === id).map((x) => ({ id: x.conversationId, platform: x.platform, chatId: x.chatId, name: x.name, messages: x.messageCount })),
+      events: d.store.characterEvents(id, c, 200, before),
+    };
   }
 
   if (method === "PUT" && (m = path.match(/^\/api\/characters\/([a-z0-9_]+)$/))) {
@@ -234,6 +246,7 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
       characterId: c.characterId,
       platform: c.platform,
       chatId: c.chatId,
+      name: c.name,
       topic: c.topic,
       lastUserAt: c.lastUserAt,
       lastBotAt: c.lastBotAt,
@@ -348,13 +361,14 @@ export function startDashboard(d: DashboardDeps, o: DashboardOptions): Server {
   const server = createServer(async (req, res) => {
     const denied = checkRequest(req, o);
     if (denied) return send(res, denied.status, { error: denied.message }, denied.status === 401 ? { "www-authenticate": 'Basic realm="mimic"' } : {});
-    const path = new URL(req.url ?? "/", "http://x").pathname;
+    const url = new URL(req.url ?? "/", "http://x");
+    const path = url.pathname;
     try {
       if (req.method === "GET" && !path.startsWith("/api/")) {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
         return res.end(readFileSync(PAGE));
       }
-      send(res, 200, await route(d, req.method ?? "GET", path, await readBody(req)));
+      send(res, 200, await route(d, req.method ?? "GET", path, await readBody(req), url.searchParams));
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, { error: e.message, issues: e.issues });
       console.error("[dashboard]", e);

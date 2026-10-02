@@ -38,6 +38,11 @@
   .chip { display: inline-block; background: var(--chip); border-radius: 999px; padding: 1px 9px; font-size: 12px; }
   .chip.ok { color: var(--accent); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
   .muted { color: var(--muted); }
+  .log details { border-bottom: 1px solid var(--line); padding: 6px 0; }
+  .log summary { cursor: pointer; display: grid; grid-template-columns: 13em 11em 1fr; gap: 10px; align-items: baseline; }
+  .log summary .what { overflow-wrap: anywhere; }
+  .log .bad b { color: var(--bad); }
+  @media (max-width: 700px) { .log summary { grid-template-columns: 1fr; gap: 0; } }
   .stat { font-size: 26px; font-weight: 650; }
   button { white-space: nowrap; font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
   button:hover { border-color: var(--muted); }
@@ -94,6 +99,7 @@
     <a href="#/" data-nav="">Overview</a>
     <a href="#/characters" data-nav="characters">Characters</a>
     <a href="#/conversations" data-nav="conversations">Conversations</a>
+    <a href="#/logs" data-nav="logs">Logs</a>
     <a href="#/settings" data-nav="settings">Settings</a>
   </nav>
   <main id="main"></main>
@@ -232,7 +238,7 @@ async function overview() {
         <div class="muted">${esc(c.localTime)} their time${c.mood !== "neutral" ? ` · feeling ${esc(c.mood)}` : ""}</div>
         <div class="row" style="margin-top:10px">${Object.entries(c.platforms).map(([p, s]) =>
           `<span class="chip ${platformTone(s)}" title="${esc(s.error ?? s.name)}">${esc(p)}: ${esc(platformWord(s))}</span>`).join("") || `<span class="chip">no bots</span>`}</div>
-        <div class="muted" style="margin-top:8px"><a href="#/conversations?c=${esc(c.id)}">${c.conversations} conversation(s)</a></div>
+        <div class="muted" style="margin-top:8px"><a href="#/conversations?c=${esc(c.id)}">${c.conversations} conversation(s)</a> · <a href="#/logs/${esc(c.id)}">logs</a></div>
       </div>`).join("")}
     </div></div>`));
 }
@@ -445,7 +451,7 @@ async function conversations(filter) {
   const list = (await api("GET", "/api/conversations")).filter((c) => !filter || c.characterId === filter);
   const page = h(`<div><h1>Conversations</h1><p class="sub">${filter ? `${esc(filter)} · <a href="#/conversations">all</a>` : "Every chat, most recent first"}</p>
     ${list.length ? `<table><thead><tr><th>Character</th><th>Platform</th><th>Chat</th><th>Topic</th><th>Messages</th><th>Last message</th></tr></thead><tbody>${list.map((c) => `
-      <tr class="link" data-id="${esc(c.id)}"><td>${esc(c.characterId)}</td><td>${esc(c.platform)}</td><td class="muted">${esc(c.chatId)}</td>
+      <tr class="link" data-id="${esc(c.id)}"><td>${esc(c.characterId)}</td><td>${esc(c.platform)}</td><td>${c.name ? esc(c.name) : `<span class="muted">${esc(c.chatId)}</span>`}</td>
       <td>${esc(c.topic ?? "")}${c.openThreads ? ` <span class="chip">${c.openThreads} open</span>` : ""}</td><td>${c.messages}</td><td>${ago(Math.max(c.lastUserAt, c.lastBotAt))}</td></tr>`).join("")}</tbody></table>`
       : `<p class="muted">No conversations yet.</p>`}</div>`);
   page.querySelectorAll("tr.link").forEach((tr) => (tr.onclick = () => (location.hash = `#/conversations/${encodeURIComponent(tr.dataset.id)}`)));
@@ -458,7 +464,7 @@ async function conversation(id) {
   const item = (text, kind, itemId, extra = "") => `<li><span>${esc(text)}${extra}</span><button class="x" data-kind="${kind}" data-id="${esc(itemId)}" title="Delete">✕</button></li>`;
   const page = h(`<div>
     <div class="row" style="justify-content:space-between"><h1>${esc(conv.characterId)} · ${esc(conv.platform)}</h1>
-      <div class="row"><button id="forget">Forget memory</button><button class="danger" id="reset">Reset chat</button></div></div>
+      <div class="row"><a href="#/logs/${esc(conv.characterId)}?c=${encodeURIComponent(conv.conversationId)}">Logs</a><button id="forget">Forget memory</button><button class="danger" id="reset">Reset chat</button></div></div>
     <p class="sub">chat ${esc(conv.chatId)} · topic ${esc(conv.topic ?? "none")} · version ${conv.version} · last message ${ago(Math.max(conv.lastUserAt, conv.lastBotAt))}</p>
 
     <h2>Messages</h2>
@@ -513,6 +519,78 @@ async function conversation(id) {
   $main.replaceChildren(page);
 }
 
+/* ---------- logs: everything that happened with a character, per person ---------- */
+
+const FAILED = new Set(["JEV_FAILED", "LLM_GENERATION_FAILED", "DELIVERY_FAILED", "HANDLER_FAILED", "COMMAND_REPLY_FAILED", "PLATFORM_FAILED"]);
+const quote = (t) => `“${String(t ?? "").slice(0, 160)}”`;
+const clock = (at) => new Date(at).toLocaleTimeString();
+// one readable line per event; the raw payload is one click away
+function describe(e) {
+  const p = e.payload;
+  switch (e.type) {
+    case "USER_MESSAGE_RECEIVED": return `they wrote ${quote(p.text)}`;
+    case "USER_TURN_READY": return `they stopped typing (${p.messageIds.length} message${p.messageIds.length > 1 ? "s" : ""}): deciding`;
+    case "JEV_FAILED": return `Jev failed, using defaults: ${p.error}`;
+    case "BEHAVIOR_DECISION_CREATED": return p.respondMode === "now"
+      ? `decided to reply now: ${p.messageCount} message(s), ${p.pace}${p.emotion ? `, ${p.emotion}` : ""}`
+      : `decided not to write now (${p.respondMode})${p.followUp ? `, follow up in ${Math.round(p.followUp.afterMs / 60000)}m` : ""}`;
+    case "CONTEXT_RETRIEVED": return `context: ${p.messages} messages, ${p.examples.length} voice examples, ${p.memories.length} notes`;
+    case "LLM_RESPONSE_GENERATED": return `wrote ${p.output.messages.map((m) => quote(m.text)).join(" ")}`;
+    case "LLM_GENERATION_FAILED": return `LLM failed, no reply: ${p.error}`;
+    case "OUTGOING_MESSAGE_SCHEDULED": return `queued for ${clock(p.dueAt)}: ${quote(p.text)}`;
+    case "OUTGOING_MESSAGE_SENT": return "sent";
+    case "OUTGOING_MESSAGE_CANCELLED": return `dropped a queued message (${p.reason})`;
+    case "DELIVERY_FAILED": return `could not send: ${p.error}`;
+    case "HANDLER_FAILED": return `crashed handling this chat: ${p.error}`;
+    case "COMMAND_RECEIVED": return p.command === "start" ? "/start (ignored)" : `/${p.command}`;
+    case "COMMAND_REPLY_FAILED": return `could not answer /${p.command}: ${p.error}`;
+    case "TOPIC_CHANGED": return `topic is now ${quote(p.topic)}`;
+    case "TIMER_EXPIRED": return `timer: ${p.kind}`;
+    case "ACTIVITY_CHANGED": return `${p.from} → ${p.to}`;
+    case "PLATFORM_STARTED": return `listening on ${p.platform}`;
+    case "PLATFORM_STOPPED": return `stopped on ${p.platform}`;
+    case "PLATFORM_FAILED": return `could not start on ${p.platform}: ${p.error}`;
+    case "MEMORY_WRITTEN": return `wrote notes: ${quote(p.summary)}`;
+    default: return JSON.stringify(p).slice(0, 200);
+  }
+}
+
+async function logs(characterId, chat) {
+  const chars = (await api("GET", "/api/overview")).characters;
+  characterId ||= chars[0]?.id;
+  if (!characterId) return $main.replaceChildren(h(`<div><h1>Logs</h1><p class="muted">No characters yet.</p></div>`));
+  const q = (before) => `/api/characters/${characterId}/logs?${new URLSearchParams({ ...(chat ? { c: chat } : {}), ...(before ? { before } : {}) })}`;
+  const data = await api("GET", q());
+  const who = Object.fromEntries(data.people.map((p) => [p.id, `${p.name ?? p.chatId} · ${p.platform}`]));
+  const rows = (events) => events.map((e) => `<details class="${FAILED.has(e.type) ? "bad" : ""}"><summary>
+      <span class="muted">${when(e.at)}</span><span>${e.conversationId.startsWith("character:") ? `<span class="muted">${esc(characterId)}</span>` : esc(who[e.conversationId] ?? e.conversationId)}</span>
+      <span class="what"><b>${esc(e.type.toLowerCase().replaceAll("_", " "))}</b> ${esc(describe(e))}</span></summary><pre>${esc(JSON.stringify(e.payload, null, 2))}</pre></details>`).join("");
+  const page = h(`<div>
+    <h1>Logs</h1><p class="sub">Everything that happened between a character and the people they talk to, newest first. Failures are red; click a line for the details.</p>
+    <div class="row" style="margin-bottom:12px">
+      <select id="char" style="width:auto">${chars.map((c) => `<option value="${esc(c.id)}" ${c.id === characterId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
+      <select id="person" style="width:auto"><option value="">everyone</option>${data.people.map((p) => `<option value="${esc(p.id)}" ${p.id === chat ? "selected" : ""}>${esc(p.name ?? p.chatId)} · ${esc(p.platform)} (${p.messages} messages)</option>`).join("")}</select>
+      <button id="refresh">Refresh</button>
+      ${chat ? `<a href="#/conversations/${encodeURIComponent(chat)}">open chat</a>` : ""}
+    </div>
+    <div class="log" id="list">${rows(data.events) || `<p class="muted">Nothing yet. ${data.people.length ? "" : `Nobody has messaged ${esc(characterId)}: if you did, check that the bot is listening (Overview).`}</p>`}</div>
+    <div class="row" style="margin-top:12px">${data.events.length === 200 ? `<button id="more">Older</button>` : ""}</div>
+  </div>`);
+  const go = (c, p) => (location.hash = `#/logs/${c}${p ? `?c=${encodeURIComponent(p)}` : ""}`);
+  page.querySelector("#char").onchange = (e) => go(e.target.value, "");
+  page.querySelector("#person").onchange = (e) => go(characterId, e.target.value);
+  page.querySelector("#refresh").onclick = () => logs(characterId, chat);
+  let last = data.events.at(-1)?.seq;
+  const more = page.querySelector("#more");
+  if (more) more.onclick = async () => {
+    const older = (await api("GET", q(last))).events;
+    page.querySelector("#list").insertAdjacentHTML("beforeend", rows(older));
+    last = older.at(-1)?.seq;
+    if (older.length < 200) more.remove();
+  };
+  $main.replaceChildren(page);
+}
+
 /* ---------- routing ---------- */
 
 async function routeTo() {
@@ -525,6 +603,7 @@ async function routeTo() {
     else if (parts[0] === "characters") await characters();
     else if (parts[0] === "conversations" && parts[1]) await conversation(decodeURIComponent(parts[1]));
     else if (parts[0] === "conversations") await conversations(new URLSearchParams(query).get("c"));
+    else if (parts[0] === "logs") await logs(parts[1] && decodeURIComponent(parts[1]), new URLSearchParams(query).get("c"));
     else if (parts[0] === "settings") await settings();
     else location.hash = "#/";
   } catch (e) {

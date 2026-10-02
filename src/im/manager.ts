@@ -19,7 +19,7 @@ export class InteractionManager {
   }
 
   receive(characterId: string, platform: Platform, m: IncomingText) {
-    const conv = this.deps.store.getOrCreateConversation(characterId, platform, m.chatId);
+    const conv = this.deps.store.getOrCreateConversation(characterId, platform, m.chatId, m.name);
     if (m.command !== undefined) {
       this.enqueue(conv.conversationId, () => this.onCommand(conv.conversationId, characterId, platform, m));
       return;
@@ -140,7 +140,10 @@ export class InteractionManager {
 
   private enqueue(conversationId: string, job: () => Promise<void> | void): Promise<void> {
     const prev = this.queues.get(conversationId) ?? Promise.resolve();
-    const next = prev.then(job).catch((e) => this.deps.log(`conversation ${conversationId}: handler failed`, e));
+    const next = prev.then(job).catch((e) => {
+      this.deps.log(`conversation ${conversationId}: handler failed`, e);
+      this.deps.store.appendEvent(conversationId, this.deps.clock.now(), "HANDLER_FAILED", { error: String(e) });
+    });
     this.queues.set(conversationId, next);
     this.inFlight.add(next);
     void next.finally(() => {
@@ -193,6 +196,7 @@ export class InteractionManager {
    * the list.
    */
   private async onCommand(conversationId: string, characterId: string, platform: Platform, m: IncomingText) {
+    this.deps.store.appendEvent(conversationId, this.deps.clock.now(), "COMMAND_RECEIVED", { command: m.command });
     if (m.command === "start") return;
     const name: CommandName = m.command && m.command in COMMANDS ? (m.command as CommandName) : "help";
     const text = runCommand(this.deps, conversationId, name);
@@ -201,6 +205,7 @@ export class InteractionManager {
       await (m.reply ? m.reply(text) : this.delivery(characterId, platform).send(m.chatId, text, `cmd:${m.platformMessageId}`));
     } catch (e) {
       this.deps.log(`command /${name} reply failed`, e);
+      this.deps.store.appendEvent(conversationId, this.deps.clock.now(), "COMMAND_REPLY_FAILED", { command: name, error: String(e) });
     }
   }
 

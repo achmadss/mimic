@@ -17,9 +17,9 @@ export function inviteUrl(applicationId: string): string {
   return `https://discord.com/oauth2/authorize?client_id=${applicationId}&scope=bot&permissions=0`;
 }
 
-export function toIncoming(msg: { author: { bot: boolean }; channel: { type: ChannelType }; channelId: string; id: string; content: string }): IncomingText | null {
+export function toIncoming(msg: { author: { bot: boolean; username?: string }; channel: { type: ChannelType }; channelId: string; id: string; content: string }): IncomingText | null {
   if (msg.author.bot || msg.channel.type !== ChannelType.DM || !msg.content.trim()) return null;
-  return { chatId: msg.channelId, platformMessageId: msg.id, text: msg.content };
+  return { chatId: msg.channelId, platformMessageId: msg.id, text: msg.content, name: msg.author.username };
 }
 
 /** Slash commands, offered in the bot's DMs only — the bot never acts in a server. */
@@ -35,9 +35,9 @@ export const SLASH_COMMANDS = Object.entries(COMMANDS).map(([name, description])
  * whatever the conversation is doing — possibly an LLM call. So it is deferred at once and the
  * answer edits the placeholder.
  */
-export async function commandIncoming(i: Pick<ChatInputCommandInteraction, "channelId" | "id" | "commandName" | "deferReply" | "editReply">): Promise<IncomingText> {
+export async function commandIncoming(i: Readonly<Pick<ChatInputCommandInteraction, "channelId" | "id" | "commandName" | "deferReply" | "editReply">> & { user?: { username: string } }): Promise<IncomingText> {
   await i.deferReply();
-  return { chatId: i.channelId, platformMessageId: i.id, text: "", command: i.commandName, reply: async (t) => void (await i.editReply(t)) };
+  return { chatId: i.channelId, platformMessageId: i.id, text: "", command: i.commandName, name: i.user?.username, reply: async (t) => void (await i.editReply(t)) };
 }
 
 export class DiscordAdapter implements DeliveryAdapter {
