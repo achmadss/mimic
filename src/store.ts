@@ -60,6 +60,28 @@ export class Store {
       .map((r: any) => ({ type: r.type, payload: JSON.parse(r.payload) }));
   }
 
+  lastEvent(conversationId: string, type: string): { at: number; payload: any } | undefined {
+    const r = this.db
+      .prepare("SELECT at, payload FROM events WHERE conversation_id = ? AND type = ? ORDER BY seq DESC LIMIT 1")
+      .get(conversationId, type) as Row | undefined;
+    return r && { at: r.at, payload: JSON.parse(r.payload) };
+  }
+
+  /** Returns how many went. */
+  forgetMemories(conversationId: string): number {
+    return this.db.prepare("DELETE FROM memories WHERE conversation_id = ?").run(conversationId).changes;
+  }
+
+  /**
+   * Messages and memory go; the conversation row and the event log stay. The log is append-only,
+   * and the row carries the version counter that makes anything still in flight stale.
+   */
+  resetConversation(conversationId: string) {
+    this.db.prepare("DELETE FROM messages WHERE conversation_id = ?").run(conversationId);
+    this.forgetMemories(conversationId);
+    this.db.prepare("UPDATE conversations SET summarized_until = 0 WHERE id = ?").run(conversationId);
+  }
+
   getOrCreateConversation(characterId: string, platform: Platform, chatId: string): ConversationState {
     const id = `${characterId}:${platform}:${chatId}`;
     this.db

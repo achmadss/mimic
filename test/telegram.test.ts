@@ -24,13 +24,14 @@ test("private text messages are forwarded; group messages are ignored", async ()
   assert.deepEqual(got, [{ chatId: "123", platformMessageId: "7", text: "hey" }]);
 });
 
-test("bot commands are not conversation: /start is addressed to the bot, not the character", async () => {
+test("bot commands are flagged as commands, never passed on as conversation", async () => {
   const a = new TelegramAdapter("123:abc", { botInfo, poll: false });
   const got: IncomingText[] = [];
   await a.start((m) => got.push(m));
   await a.bot.handleUpdate(update("private", "/start", 9, true));
-  await a.bot.handleUpdate(update("private", "/start@rick_test_bot", 10, true));
-  assert.deepEqual(got, []);
+  await a.bot.handleUpdate(update("private", "/Status@rick_test_bot", 10, true));
+  assert.deepEqual(got.map((m) => m.command), ["start", "status"]);
+  got.length = 0;
   // a slash inside a normal message is not a command and still reaches the character
   await a.bot.handleUpdate(update("private", "i got 3/4 through it", 11));
   assert.equal(got.length, 1);

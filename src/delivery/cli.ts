@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createInterface, type Interface } from "node:readline";
+import { parseCommand } from "../im/commands.ts";
 import type { DeliveryAdapter, IncomingText } from "./types.ts";
 
 export class CliAdapter implements DeliveryAdapter {
@@ -16,7 +17,12 @@ export class CliAdapter implements DeliveryAdapter {
   async start(onMessage: (m: IncomingText) => void) {
     this.rl = createInterface({ input: this.input });
     // ids must be unique across runs: the DB dedupes on them
-    this.rl.on("line", (line) => onMessage({ chatId: "local", platformMessageId: randomUUID(), text: line }));
+    this.rl.on("line", (line) => {
+      const command = parseCommand(line) ?? undefined;
+      // a command's answer is not the character speaking, so it is not printed under their name
+      const reply = async (t: string) => void this.output.write(`${t.replace(/^/gm, "  | ")}\n`);
+      onMessage({ chatId: "local", platformMessageId: randomUUID(), text: line, ...(command ? { command, reply } : {}) });
+    });
   }
 
   async send(_chatId: string, text: string, _idempotencyKey: string) {

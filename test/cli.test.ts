@@ -33,3 +33,19 @@ test("cli message ids are unique across adapter instances (Review Focus 5)", asy
   }
   assert.equal(new Set(ids).size, 2);
 });
+
+test("cli: a known /command is a command, anything else is conversation", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let written = "";
+  output.on("data", (d) => (written += d));
+  const got: IncomingText[] = [];
+  const a = new CliAdapter("Rick", input, output);
+  await a.start((m) => got.push(m));
+  input.write("/status\n/shrug\n");
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(got.map((m) => m.command), ["status", undefined]);
+  await got[0].reply!("a\nb");
+  assert.equal(written, "  | a\n  | b\n", "not printed as the character");
+  await a.stop();
+});

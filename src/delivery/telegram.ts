@@ -1,6 +1,7 @@
 import { autoRetry } from "@grammyjs/auto-retry";
 import { Bot } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
+import { COMMANDS } from "../im/commands.ts";
 import type { DeliveryAdapter, IncomingText } from "./types.ts";
 
 export class TelegramAdapter implements DeliveryAdapter {
@@ -20,13 +21,23 @@ export class TelegramAdapter implements DeliveryAdapter {
   async start(onMessage: (m: IncomingText) => void) {
     this.bot.on("message:text", (ctx) => {
       if (ctx.chat.type !== "private") return; // DMs only
-      // Telegram sends /start when the user opens the chat. A command is addressed to the bot, so it
-      // must not reach the character — otherwise the first thing they ever say is a reply to "/start".
-      if (ctx.message.entities?.[0]?.type === "bot_command") return;
-      onMessage({ chatId: String(ctx.chat.id), platformMessageId: String(ctx.message.message_id), text: ctx.message.text });
+      const base = { chatId: String(ctx.chat.id), platformMessageId: String(ctx.message.message_id), text: ctx.message.text };
+      // A command is addressed to the bot, not the character: it is flagged, never fed to the
+      // conversation — otherwise the first thing they ever say is a reply to "/start".
+      const cmd = ctx.message.entities?.[0];
+      if (cmd?.type === "bot_command" && cmd.offset === 0) {
+        onMessage({ ...base, command: ctx.message.text.slice(1, cmd.length).split("@")[0].toLowerCase() });
+        return;
+      }
+      onMessage(base);
     });
     this.bot.catch((err) => console.error("[telegram] handler error", err));
-    if (this.opts.poll !== false) this.bot.start().catch((e) => console.error("[telegram] polling stopped", e));
+    if (this.opts.poll === false) return;
+    // the menu next to the text box; best-effort, the commands work without it
+    await this.bot.api
+      .setMyCommands(Object.entries(COMMANDS).map(([command, description]) => ({ command, description })), { scope: { type: "all_private_chats" } })
+      .catch((e) => console.error("[telegram] setMyCommands failed", e));
+    this.bot.start().catch((e) => console.error("[telegram] polling stopped", e));
   }
 
   async send(chatId: string, text: string, _idempotencyKey: string) {

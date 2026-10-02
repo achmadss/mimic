@@ -42,6 +42,24 @@ Reads `~/Downloads/rickmorty-transcripts/Rick-n-Morty.csv` (override with
 it: a character with no examples simply gets no example block, and replies
 normally.
 
+### Commands
+
+Out-of-character controls, in any chat with a character. Each one acts on that
+chat only. On Telegram they appear in the `/` menu; on Discord they are slash
+commands in the bot's DMs; in the CLI, type them as a line.
+
+| Command | Does |
+|---|---|
+| `/status` | What the character is doing, their local time and mood; this chat's topic, queued messages, follow-up and open threads |
+| `/memory` | The facts, recent notes and open threads kept for this chat |
+| `/forget` | Drop that memory and the open threads; keep the chat history |
+| `/reset` | Start the chat over: cancel queued messages, delete history and memory |
+| `/debug` | The last turn's decision (respond mode, topic action, pace, emotion) and what context it was built from |
+| `/help` | The list |
+
+Command replies are never stored as messages, so the character never sees them.
+Telegram's automatic `/start` is ignored, so a new chat does not open with a menu.
+
 ### Memory
 
 Nothing to set up for any of this; it fills from the conversation itself.

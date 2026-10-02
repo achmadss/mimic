@@ -1,4 +1,5 @@
-import { ChannelType, Client, Events, GatewayIntentBits, Partials } from "discord.js";
+import { ApplicationIntegrationType, ChannelType, Client, Events, GatewayIntentBits, InteractionContextType, Partials, type ChatInputCommandInteraction } from "discord.js";
+import { COMMANDS } from "../im/commands.ts";
 import type { Presence } from "../types.ts";
 import type { DeliveryAdapter, IncomingText } from "./types.ts";
 
@@ -21,6 +22,24 @@ export function toIncoming(msg: { author: { bot: boolean }; channel: { type: Cha
   return { chatId: msg.channelId, platformMessageId: msg.id, text: msg.content };
 }
 
+/** Slash commands, offered in the bot's DMs only — the bot never acts in a server. */
+export const SLASH_COMMANDS = Object.entries(COMMANDS).map(([name, description]) => ({
+  name,
+  description,
+  contexts: [InteractionContextType.BotDM],
+  integrationTypes: [ApplicationIntegrationType.GuildInstall],
+}));
+
+/**
+ * Discord wants an answer to an interaction within 3 s, and the command waits its turn behind
+ * whatever the conversation is doing — possibly an LLM call. So it is deferred at once and the
+ * answer edits the placeholder.
+ */
+export async function commandIncoming(i: Pick<ChatInputCommandInteraction, "channelId" | "id" | "commandName" | "deferReply" | "editReply">): Promise<IncomingText> {
+  await i.deferReply();
+  return { chatId: i.channelId, platformMessageId: i.id, text: "", command: i.commandName, reply: async (t) => void (await i.editReply(t)) };
+}
+
 export class DiscordAdapter implements DeliveryAdapter {
   readonly platform = "discord" as const;
   /** nonce + enforceNonce makes Discord drop a resend of the same message. */
@@ -37,7 +56,16 @@ export class DiscordAdapter implements DeliveryAdapter {
       const m = toIncoming(msg);
       if (m) onMessage(m);
     });
+    this.client.on(Events.InteractionCreate, async (i) => {
+      if (!i.isChatInputCommand() || i.context !== InteractionContextType.BotDM) return;
+      try {
+        onMessage(await commandIncoming(i));
+      } catch (e) {
+        console.error("[discord] command failed", e);
+      }
+    });
     this.client.once(Events.ClientReady, (c) => {
+      c.application.commands.set(SLASH_COMMANDS).catch((e) => console.error("[discord] registering commands failed", e));
       console.error(`[mimic] discord: people can DM ${c.user.tag} once it shares a server with them. Add it: ${inviteUrl(c.user.id)}`);
     });
     await this.client.login(this.token);

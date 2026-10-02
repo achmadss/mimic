@@ -2,6 +2,7 @@ import type { DeliveryLookup, IncomingText } from "../delivery/types.ts";
 import { Scheduler } from "../scheduler.ts";
 import { typingTimeMs } from "../timing.ts";
 import type { ActionRow, BotMessage, ConversationState, Platform } from "../types.ts";
+import { COMMANDS, runCommand, type CommandName } from "./commands.ts";
 import { respond, type Deps } from "./respond.ts";
 
 /** One serial queue per conversation; the only writer of conversation state. */
@@ -18,9 +19,13 @@ export class InteractionManager {
   }
 
   receive(characterId: string, platform: Platform, m: IncomingText) {
+    const conv = this.deps.store.getOrCreateConversation(characterId, platform, m.chatId);
+    if (m.command !== undefined) {
+      this.enqueue(conv.conversationId, () => this.onCommand(conv.conversationId, characterId, platform, m));
+      return;
+    }
     const text = m.text.trim();
     if (!text) return;
-    const conv = this.deps.store.getOrCreateConversation(characterId, platform, m.chatId);
     this.enqueue(conv.conversationId, () => this.onUserMessage(conv.conversationId, m.platformMessageId, text));
   }
 
@@ -122,6 +127,23 @@ export class InteractionManager {
     const h = this.typing.get(conversationId);
     if (h !== undefined) this.deps.clock.clearTimeout(h);
     this.typing.delete(conversationId);
+  }
+
+  /**
+   * Telegram sends `/start` when someone opens the chat; answering it out of character would make a
+   * settings menu the first thing they ever see, so it stays silent. Any other unknown command gets
+   * the list.
+   */
+  private async onCommand(conversationId: string, characterId: string, platform: Platform, m: IncomingText) {
+    if (m.command === "start") return;
+    const name: CommandName = m.command && m.command in COMMANDS ? (m.command as CommandName) : "help";
+    const text = runCommand(this.deps, conversationId, name);
+    if (name === "reset") this.stopTyping(conversationId);
+    try {
+      await (m.reply ? m.reply(text) : this.delivery(characterId, platform).send(m.chatId, text, `cmd:${m.platformMessageId}`));
+    } catch (e) {
+      this.deps.log(`command /${name} reply failed`, e);
+    }
   }
 
   /** A message left `sending` by a crash: resend only where the platform can dedupe it. */

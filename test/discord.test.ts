@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ChannelType } from "discord.js";
-import { DiscordAdapter, discordNonce, inviteUrl, toIncoming } from "../src/delivery/discord.ts";
+import { InteractionContextType } from "discord.js";
+import { commandIncoming, DiscordAdapter, discordNonce, inviteUrl, SLASH_COMMANDS, toIncoming } from "../src/delivery/discord.ts";
 
 const msg = (over: Record<string, unknown> = {}) =>
   ({ author: { bot: false }, channel: { type: ChannelType.DM }, channelId: "c1", id: "m1", content: "hey", ...over }) as any;
@@ -46,4 +47,18 @@ test("setPresence mirrors availability onto the bot account", () => {
 
 test("the invite link adds the bot to a server with no permissions", () => {
   assert.equal(inviteUrl("123"), "https://discord.com/oauth2/authorize?client_id=123&scope=bot&permissions=0");
+});
+
+test("slash commands are offered in bot DMs only, deferred at once, and answered by editing", async () => {
+  assert.ok(SLASH_COMMANDS.every((c) => c.contexts.length === 1 && c.contexts[0] === InteractionContextType.BotDM));
+  assert.ok(SLASH_COMMANDS.some((c) => c.name === "reset"));
+  const calls: string[] = [];
+  const m = await commandIncoming({
+    channelId: "c1", id: "i1", commandName: "status",
+    deferReply: async () => void calls.push("defer"),
+    editReply: async (t: any) => void calls.push(`edit:${t}`),
+  } as any);
+  assert.deepEqual({ chatId: m.chatId, command: m.command }, { chatId: "c1", command: "status" });
+  await m.reply!("ok");
+  assert.deepEqual(calls, ["defer", "edit:ok"]);
 });
