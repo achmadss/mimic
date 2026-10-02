@@ -1,4 +1,5 @@
 import type { DeliveryLookup, IncomingText } from "../delivery/types.ts";
+import { availability } from "../character/derived.ts";
 import { Scheduler } from "../scheduler.ts";
 import { typingTimeMs } from "../timing.ts";
 import type { ActionRow, BotMessage, ConversationState, Platform } from "../types.ts";
@@ -132,9 +133,22 @@ export class InteractionManager {
    * in flight, and none at all (the common case) when nothing is pending.
    */
   onActivityChanged(characterId: string) {
-    for (const conv of this.deps.store.conversationsForCharacter(characterId)) {
-      if (!this.serves(conv.conversationId) || !this.deps.store.pendingBotMessages(conv.conversationId).length) continue;
-      void this.enqueue(conv.conversationId, () => respond(this.deps, conv.conversationId, "activity_changed", null));
+    const { store, clock } = this.deps;
+    const awake = availability(store.getCharacterState(characterId, clock.now()).activity) !== "sleeping";
+    for (const conv of store.conversationsForCharacter(characterId)) {
+      const id = conv.conversationId;
+      if (!this.serves(id)) continue;
+      if (store.pendingBotMessages(id).length) {
+        void this.enqueue(id, () => respond(this.deps, id, "activity_changed", null));
+        continue;
+      }
+      // Measured on the server: a `later` whose one follow-up landed while they slept was dropped for
+      // good. A person back from sleep or work answers what they left on read, so they get one more
+      // decision per change — unless they already replied, a follow-up is still armed, or a turn is
+      // still being typed (its own timer will answer it).
+      if (awake && conv.lastUserAt > conv.lastBotAt && !store.getAction(`followup:${id}`) && !store.getTurnBuffer(id)) {
+        void this.enqueue(id, () => respond(this.deps, id, "unanswered", null));
+      }
     }
   }
 

@@ -110,6 +110,7 @@ export function buildPrompt(p: PromptInput): ChatMessage[] {
     p.trigger === "user_turn" ? TOPIC_INSTRUCTION[p.decision.topicAction] : "",
     p.keptPending.length ? `These messages of yours are already queued and will be sent first: ${p.keptPending.map((t) => JSON.stringify(t)).join(", ")}. Don't repeat them.` : "",
     p.trigger === "followup_due" ? "They haven't written anything new. You are messaging them again on your own, following up on the conversation so far." : "",
+    p.trigger === "unanswered" ? "Their last messages above are still unanswered: you were busy or asleep when they came in. You are getting back to them now." : "",
     'If you switch to a new topic, set "topic" to a 1-4 word label for it; otherwise set "topic" to null.',
     // "this message", not "they mentioned": measured live, the model summarised the open *topic*
     // instead of the thing the user had just said, and stored a thread nobody had raised.

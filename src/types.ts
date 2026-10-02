@@ -13,7 +13,8 @@ export type PendingDecision = (typeof PENDING_DECISIONS)[number];
 export const RESPOND_MODES = ["now", "later", "no_reply"] as const;
 export type RespondMode = (typeof RESPOND_MODES)[number];
 export type MessageStatus = "scheduled" | "sending" | "sent" | "cancelled" | "failed";
-export type Trigger = "user_turn" | "followup_due" | "activity_changed";
+/** `unanswered`: the character came back (woke up, got home) to messages they never answered. */
+export type Trigger = "user_turn" | "followup_due" | "activity_changed" | "unanswered";
 /** How much goes into one message. A fraction of the character's own per-message ceiling. */
 export const MESSAGE_LENGTHS = ["terse", "short", "normal", "long"] as const;
 export type MessageLength = (typeof MESSAGE_LENGTHS)[number];

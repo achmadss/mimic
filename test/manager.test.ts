@@ -194,6 +194,38 @@ test("activity change re-decides a queued reply: a character who has gone to sle
   assert.deepEqual(t.adapter.sent, []);
 });
 
+test("messages left unanswered while asleep get answered on waking, once, and never when already answered", async () => {
+  const t = setupIM();
+  const awake = (activity: "sleeping" | "idle") =>
+    t.store.saveCharacterState({ characterId: "rick", activity, activitySince: t.clock.now(), mood: null, moodChangedAt: null });
+  // the server case: `later`, then the follow-up lands while asleep and becomes no_reply
+  t.jev.next = { respond_mode: choice("later"), follow_up_after: choice("15m") };
+  t.say("u up?");
+  await t.tick(2500);
+  awake("sleeping");
+  t.jev.next = { respond_mode: choice("no_reply") };
+  await t.tick(15 * 60_000);
+  assert.deepEqual(t.adapter.sent, []);
+  const asked = t.jev.calls.length;
+
+  t.im.onActivityChanged("rick"); // still asleep: nothing
+  await t.im.drain();
+  assert.equal(t.jev.calls.length, asked);
+
+  awake("idle");
+  t.jev.next = {};
+  t.llm.outputs = [{ messages: [{ text: "sorry was out cold" }] }];
+  t.im.onActivityChanged("rick");
+  await t.tick(LONG);
+  assert.equal(t.jev.calls[asked].state.trigger, "unanswered");
+  assert.ok(t.llm.calls.at(-1)!.some((m: any) => /still unanswered/.test(m.content)));
+  assert.deepEqual(t.adapter.sent.map((s: any) => s.text), ["sorry was out cold"]);
+
+  t.im.onActivityChanged("rick"); // answered now: nothing more to do
+  await t.im.drain();
+  assert.equal(t.jev.calls.length, asked + 1);
+});
+
 test("activity change with nothing queued does not call Jev at all", async () => {
   const t = setupIM();
   t.store.getOrCreateConversation("rick", "cli", "local");

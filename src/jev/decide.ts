@@ -40,7 +40,7 @@ export function decide(answers: JevAnswers | null, c: DecideContext): BehaviorDe
   // reply-shaping fields take their "nothing to do" value rather than whatever Jev would have said.
   const generating = c.trigger !== "activity_changed";
   let respondMode: RespondMode = generating ? choice("respond_mode", RESPOND_MODES, "now") : "no_reply";
-  if (c.trigger === "followup_due" && respondMode === "later") respondMode = "no_reply"; // no follow-up chains
+  if ((c.trigger === "followup_due" || c.trigger === "unanswered") && respondMode === "later") respondMode = "no_reply"; // no follow-up chains
   const wantsFollowUp = c.trigger === "user_turn" && (respondMode === "later" || yes("follow_up", c.followUpThreshold));
   const imp = a.importance;
   // neutral is the fallback and maps to `undefined`: a mood nobody asked to move is left alone to
