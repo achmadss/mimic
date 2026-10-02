@@ -102,8 +102,11 @@ if (dashboardOn) {
   );
 }
 
-process.on("SIGINT", async () => {
-  routine.stop();
-  await adapters.stopAll();
-  process.exit(0);
-});
+// SIGINT from a terminal, SIGTERM from `docker stop`
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, async () => {
+    routine.stop();
+    await adapters.stopAll();
+    process.exit(0);
+  });
+}

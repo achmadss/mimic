@@ -12,6 +12,31 @@ npm start              # Telegram/Discord for every character with a token set
 npm test
 ```
 
+## Run with Docker
+
+```bash
+cp .env.example .env     # fill TYPESAFE_API_KEY, LLM_*, and DASHBOARD_PASSWORD
+mkdir -p data
+docker compose up -d
+```
+
+Then open **http://127.0.0.1:8787** (any user name, your `DASHBOARD_PASSWORD`)
+and paste each character's bot tokens there, or put them in `.env` first.
+
+- **`.env` must exist before the first `up`.** Docker mounts a missing file as
+  an empty directory. The dashboard writes tokens into it, and the app reads it
+  at every start, so a token added in the dashboard survives restarts.
+- **`DASHBOARD_PASSWORD` is required** in the container: the dashboard listens
+  on all interfaces inside it, and refuses to do that without one. Compose only
+  publishes it on this machine's localhost.
+- **Your data is in `./data`** (database, saved settings) and `./characters`.
+  Both are mounted, so rebuilding the image loses nothing.
+- **Bringing over an existing database:** stop the bot first, then
+  `mv mimic.db mimic.db-wal mimic.db-shm data/` (the `-wal`/`-shm` files may
+  not exist; that is fine). Without it you start with no voice examples: run
+  `npm run ingest` on the host with `DB_PATH=data/mimic.db`.
+- Logs: `docker compose logs -f`. Update: `git pull && docker compose up -d --build`.
+
 ## Characters
 
 One JSON file per character in `characters/`, loaded at startup — adding a
