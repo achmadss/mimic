@@ -1,3 +1,4 @@
+import { aiClients } from "./ai.ts";
 import { availability, PRESENCE } from "./character/derived.ts";
 import { loadProfiles } from "./character/profile.ts";
 import { RoutineEngine } from "./character/routine-engine.ts";
@@ -10,19 +11,7 @@ import { AdapterRegistry, BOT_PLATFORMS } from "./delivery/registry.ts";
 import { DiscordAdapter } from "./delivery/discord.ts";
 import { TelegramAdapter } from "./delivery/telegram.ts";
 import { InteractionManager } from "./im/manager.ts";
-import { httpJevClient } from "./jev/client.ts";
-import { openAICompatibleClient, type StructuredMode } from "./llm/client.ts";
 import { Store } from "./store.ts";
-
-function env(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`missing env ${name} (see .env.example)`);
-  return v;
-}
-
-const MODES: StructuredMode[] = ["json_schema", "tool", "json_object"];
-const mode = (process.env.LLM_STRUCTURED_MODE ?? "tool") as StructuredMode;
-if (!MODES.includes(mode)) throw new Error(`LLM_STRUCTURED_MODE must be one of ${MODES.join(", ")}`);
 
 /** Optional env overrides, so tuning a running character doesn't mean editing source. */
 function configFromEnv(): Config {
@@ -38,8 +27,8 @@ function configFromEnv(): Config {
 const store = new Store(openDb(process.env.DB_PATH ?? "mimic.db"));
 const CHARACTERS_DIR = process.env.MIMIC_CHARACTERS ?? "characters";
 const profiles = loadProfiles(CHARACTERS_DIR);
-const jev = httpJevClient({ apiKey: env("TYPESAFE_API_KEY") });
-const llm = openAICompatibleClient({ baseUrl: env("LLM_BASE_URL"), apiKey: env("LLM_API_KEY"), model: env("LLM_MODEL"), mode });
+// read per call: keys and models saved in the dashboard apply without a restart
+const ai = aiClients(process.env);
 
 const log = (m: string, e?: unknown) => console.error(`[mimic] ${m}`, e ?? "");
 
@@ -71,7 +60,7 @@ const adapters = new AdapterRegistry({
   log,
 });
 
-im = new InteractionManager({ store, clock: realClock, jev, llm, profiles, config, log }, (characterId, platform) => adapters.get(characterId, platform));
+im = new InteractionManager({ store, clock: realClock, ai, profiles, config, log }, (characterId, platform) => adapters.get(characterId, platform));
 
 const routine = new RoutineEngine({
   store,
@@ -94,6 +83,14 @@ if (cliIdx >= 0) {
 for (const p of profiles.values()) await adapters.sync(p.characterId, p);
 if (adapters.size === 0 && !dashboardOn) throw new Error("no adapters: set bot token env vars, or run `npm run cli -- rick`");
 if (adapters.size === 0) log("no bot is running yet: add a token in the dashboard");
+// a missing key would otherwise only show up as a character that never answers
+for (const id of profiles.keys()) {
+  try {
+    ai(id);
+  } catch (e) {
+    log(e instanceof Error ? e.message : String(e));
+  }
+}
 
 if (dashboardOn) {
   startDashboard(

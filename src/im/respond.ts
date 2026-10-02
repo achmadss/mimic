@@ -40,8 +40,8 @@ export interface Deps {
   store: Store;
   scheduler: Scheduler;
   clock: Clock;
-  jev: JevClient;
-  llm: LLMClient;
+  /** The character's own Jev and LLM. Resolved per call, so a key or model changed in the dashboard applies on the next turn. */
+  ai: (characterId: string) => { llm: LLMClient; jev: JevClient };
   profiles: Map<string, CharacterProfile>;
   config: Config;
   log: (msg: string, err?: unknown) => void;
@@ -99,7 +99,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
       openThreads: open,
       them,
     });
-    answers = await d.jev.ask(state, buildQuestions(trigger, pending, open));
+    answers = await d.ai(conv.characterId).jev.ask(state, buildQuestions(trigger, pending, open));
   } catch (e) {
     d.log("jev unavailable, using defaults", e);
   }
@@ -151,7 +151,7 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
 
   let output: LLMOutput;
   try {
-    output = await d.llm.generate(
+    output = await d.ai(conv.characterId).llm.generate(
       buildPrompt({
         profile, decision, trigger, activity, mood, localTime, topic: conv.topic, recent, turn: texts,
         keptPending: kept.map((m) => m.text), styles, examples, askAbout: asking.map((t) => t.summary),

@@ -82,6 +82,11 @@ While the bot runs, **http://127.0.0.1:8787** is a dashboard for all of it:
   are ever shown), and the bot goes live, swaps, or goes offline at once: no
   restart for any token or platform change. A rejected token is shown as an
   error on the character. Two characters cannot share a token.
+- **Model & keys** — the LLM base URL, model, API key and structured mode, and
+  the Jev (Typesafe) key. Settings holds the defaults; each character can
+  override any of them (`RICK_LLM_MODEL`, `MORTY_TYPESAFE_API_KEY`, …), so
+  characters can run on different models or accounts. Written to `.env` and
+  live on the next message; the model field suggests what the provider lists.
 - **Settings** — every engine knob, saved to `mimic.config.json` (only what
   differs from the defaults) and live on the next message. Saved settings win
   over the `MIMIC_*` env overrides.

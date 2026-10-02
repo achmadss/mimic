@@ -16,7 +16,7 @@ import { overlap, type HistoryMessage } from "./context.ts";
 
 export interface MemoryDeps {
   store: Store;
-  llm: LLMClient;
+  ai: (characterId: string) => { llm: LLMClient };
   clock: Clock;
   profiles: Map<string, CharacterProfile>;
   config: Config;
@@ -47,7 +47,7 @@ export async function summarizeIfDue(d: MemoryDeps, conversationId: string): Pro
     if (!chunk.length) return false;
 
     const known = store.memories(conversationId, "fact", 50);
-    const notes = await d.llm.summarize([
+    const notes = await d.ai(profile.characterId).llm.summarize([
       {
         role: "system",
         content: [

@@ -255,7 +255,7 @@ test("a process leaves alone conversations on platforms it is not running", asyn
   t.store.putAction({ id: `followup:${tg}`, conversationId: tg, kind: "delayed_followup", dueAt: t.clock.now() - 1000 });
   // the CLI process: only a cli adapter, like `npm run cli` against the live database
   const cliOnly = new InteractionManager(
-    { store: t.store, clock: t.clock, jev: t.jev, llm: t.llm, profiles: loadProfiles("characters"), config: DEFAULT_CONFIG, log: () => {} },
+    { store: t.store, clock: t.clock, ai: () => ({ jev: t.jev, llm: t.llm }), profiles: loadProfiles("characters"), config: DEFAULT_CONFIG, log: () => {} },
     (_c, platform) => {
       if (platform !== "cli") throw new Error(`no adapter for ${platform}`);
       return t.adapter;
@@ -277,7 +277,7 @@ test("a platform that starts after boot adopts its timers; one that stops releas
   t.store.putAction({ id: `followup:${tg}`, conversationId: tg, kind: "delayed_followup", dueAt: t.clock.now() + 60_000 });
   const live = new Set<string>();
   const im = new InteractionManager(
-    { store: t.store, clock: t.clock, jev: t.jev, llm: t.llm, profiles: loadProfiles("characters"), config: DEFAULT_CONFIG, log: () => {} },
+    { store: t.store, clock: t.clock, ai: () => ({ jev: t.jev, llm: t.llm }), profiles: loadProfiles("characters"), config: DEFAULT_CONFIG, log: () => {} },
     (_c, platform) => {
       if (!live.has(platform)) throw new Error("offline");
       return t.adapter;

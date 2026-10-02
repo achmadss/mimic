@@ -20,7 +20,7 @@ async function boot() {
   const profiles = loadProfiles(join(dir, "characters"));
   const config = structuredClone(DEFAULT_CONFIG);
   // the IM must see the same profiles and config objects the dashboard edits
-  const im = new InteractionManager({ store: t.store, clock: t.clock, jev: t.jev, llm: t.llm, profiles, config, log: () => {} }, () => t.adapter);
+  const im = new InteractionManager({ store: t.store, clock: t.clock, ai: () => ({ jev: t.jev, llm: t.llm }), profiles, config, log: () => {} }, () => t.adapter);
   const routine = new RoutineEngine({ store: t.store, clock: t.clock, profiles, onTransition: () => {}, log: () => {} });
   routine.start();
   const configPath = join(dir, "mimic.config.json");
@@ -232,6 +232,34 @@ test("link and unlink two chats from the dashboard", async () => {
     assert.deepEqual((await d.call("GET", path(dc))).body.linked.map((c: any) => c.id), [tg]);
     await d.call("POST", path(tg) + "/unlink", {});
     assert.deepEqual((await d.call("GET", path(dc))).body.linked, []);
+  } finally {
+    d.close();
+  }
+});
+
+test("model and keys: defaults, per-character overrides, validated, written to .env", async () => {
+  const d = await boot();
+  try {
+    assert.equal((await d.call("PUT", "/api/ai/default/LLM_MODEL", { value: "glm-5" })).status, 200);
+    const key = await d.call("PUT", "/api/ai/rick/LLM_API_KEY", { value: "sk-rick-1234" });
+    assert.deepEqual(key.body.ai.LLM_API_KEY, { name: "RICK_LLM_API_KEY", secret: true, own: "…1234", effective: "…1234" }, "a key is never echoed");
+    assert.deepEqual(key.body.ai.LLM_MODEL, { name: "RICK_LLM_MODEL", secret: false, own: null, effective: "glm-5" }, "unset falls back to the default");
+
+    await d.call("PUT", "/api/ai/rick/LLM_MODEL", { value: "kimi-k3/preview" });
+    const rick = await d.call("GET", "/api/characters/rick");
+    assert.equal(rick.body.ai.LLM_MODEL.effective, "kimi-k3/preview");
+    assert.equal((await d.call("GET", "/api/characters/morty")).body.ai.LLM_MODEL.effective, "glm-5", "Morty is untouched");
+    assert.match(readFileSync(d.envPath, "utf8"), /^RICK_LLM_API_KEY=sk-rick-1234$/m);
+    assert.equal(d.env.RICK_LLM_MODEL, "kimi-k3/preview", "the running process sees it");
+
+    assert.equal((await d.call("PUT", "/api/ai/rick/LLM_STRUCTURED_MODE", { value: "xml" })).status, 400);
+    assert.equal((await d.call("PUT", "/api/ai/rick/LLM_BASE_URL", { value: "not-a-url" })).status, 400);
+    assert.equal((await d.call("PUT", "/api/ai/rick/PATH", { value: "x" })).status, 404, "only the AI vars are writable");
+    assert.equal((await d.call("PUT", "/api/ai/nobody/LLM_MODEL", { value: "x" })).status, 404);
+
+    const unset = await d.call("PUT", "/api/ai/rick/LLM_MODEL", { value: null });
+    assert.equal(unset.body.ai.LLM_MODEL.effective, "glm-5");
+    assert.equal((await d.call("GET", "/api/config")).body.ai.LLM_MODEL.own, "glm-5");
   } finally {
     d.close();
   }

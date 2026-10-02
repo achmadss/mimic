@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
+import { AI_VARS, aiStatus, aiVarName, checkAiValue, llmEndpoint, type AiVar } from "../ai.ts";
 import { availability, formatLocalTime } from "../character/derived.ts";
 import { moodNow } from "../character/mood.ts";
 import { ProfileSchema, type CharacterProfile } from "../character/profile.ts";
@@ -19,6 +20,7 @@ import { ACTIVITIES, PACES } from "../types.ts";
  * next turn — profiles and config are shared objects the reply path reads every time.
  *
  * Bot tokens and platform bindings are live too: a change re-syncs that character's adapters.
+ * So are LLM and Jev keys and models: the reply path resolves them from `env` on every call.
  */
 export interface DashboardDeps {
   store: Store;
@@ -30,7 +32,7 @@ export interface DashboardDeps {
   configPath: string;
   charactersDir: string;
   adapters: AdapterRegistry;
-  /** The dotenv file bot tokens are written to. */
+  /** The dotenv file bot tokens, keys and models are written to. */
   envPath: string;
   env: NodeJS.ProcessEnv;
 }
@@ -121,7 +123,7 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
   if (method === "GET" && (m = path.match(/^\/api\/characters\/([a-z0-9_]+)$/))) {
     const p = d.profiles.get(m[1]);
     if (!p) throw new HttpError(404, "no such character");
-    return { profile: p, platforms: platformsOf(p, d) };
+    return { profile: p, platforms: platformsOf(p, d), ai: aiStatus(d.env, p.characterId) };
   }
 
   if (method === "PUT" && (m = path.match(/^\/api\/characters\/([a-z0-9_]+)$/))) {
@@ -182,7 +184,44 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
     return { ok: true };
   }
 
-  if (method === "GET" && path === "/api/config") return { config: d.config, defaults: DEFAULT_CONFIG };
+  if (method === "GET" && path === "/api/config") return { config: d.config, defaults: DEFAULT_CONFIG, ai: aiStatus(d.env, null) };
+
+  // keys and models: `default` is the global value, a character id is that character's override
+  if ((m = path.match(/^\/api\/ai\/([a-z0-9_]+)(\/.*)?$/))) {
+    const characterId = m[1] === "default" ? null : m[1];
+    if (characterId && !d.profiles.has(characterId)) throw new HttpError(404, "no such character");
+    const rest = m[2] ?? "";
+
+    if (method === "GET" && rest === "/models") {
+      const { baseUrl, apiKey } = llmEndpoint(d.env, characterId);
+      if (!baseUrl) return { models: [] };
+      try {
+        const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/models`, {
+          headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) return { models: [], error: `${baseUrl}/models answered ${res.status}` };
+        const data = ((await res.json()) as { data?: { id?: unknown }[] }).data ?? [];
+        return { models: data.map((x) => x.id).filter((x): x is string => typeof x === "string").sort() };
+      } catch (e) {
+        return { models: [], error: (e as Error).message };
+      }
+    }
+
+    const v = rest.slice(1) as AiVar;
+    if (method === "PUT" && AI_VARS.includes(v)) {
+      const raw = (body as { value?: unknown })?.value;
+      if (raw !== null && (typeof raw !== "string" || !raw.trim())) throw new HttpError(400, "value must be a string, or null to unset it");
+      const value = typeof raw === "string" ? raw.trim() : null;
+      try {
+        if (value !== null) checkAiValue(v, value);
+        setEnvVar(d.envPath, d.env, aiVarName(characterId, v), value);
+      } catch (e) {
+        throw new HttpError(400, (e as Error).message);
+      }
+      return { ok: true, ai: aiStatus(d.env, characterId) };
+    }
+  }
 
   if (method === "PUT" && path === "/api/config") {
     const parsed = ConfigOverridesSchema.safeParse(body);

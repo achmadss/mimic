@@ -16,6 +16,6 @@ test("setEnvVar replaces, appends and removes one line, and leaves the rest alon
   setEnvVar(path, env, "RICK_TELEGRAM_TOKEN", null);
   assert.equal(readFileSync(path, "utf8"), "# keys\nLLM_API_KEY=abc\nRICK_DISCORD_TOKEN=MTIz.abc.def\n");
   assert.equal(env.RICK_TELEGRAM_TOKEN, undefined);
-  assert.throws(() => setEnvVar(path, env, "X", "a b\nEVIL=1"), /bot token/, "no line injection");
+  assert.throws(() => setEnvVar(path, env, "X", "a b\nEVIL=1"), /need quoted/, "no line injection");
   assert.throws(() => setEnvVar(path, env, "bad-name", "x"), /UPPER_SNAKE_CASE/);
 });

@@ -57,7 +57,7 @@ export function makeDeps() {
   const jev = new FakeJev();
   const llm = new FakeLLM();
   const logs: string[] = [];
-  const deps: Deps = { store, scheduler, clock, jev, llm, profiles: loadProfiles("characters"), config: DEFAULT_CONFIG, log: (m) => logs.push(m) };
+  const deps: Deps = { store, scheduler, clock, ai: () => ({ jev, llm }), profiles: loadProfiles("characters"), config: DEFAULT_CONFIG, log: (m) => logs.push(m) };
   const conv = store.getOrCreateConversation("rick", "cli", "local");
   return { deps, clock, store, jev, llm, logs, fired, convId: conv.conversationId };
 }
@@ -89,7 +89,7 @@ export function setupIM(opts: { store?: Store; start?: number; idempotent?: bool
   const adapter = new FakeAdapter("cli", opts.idempotent ?? true);
   const logs: string[] = [];
   const im = new InteractionManager(
-    { store, clock, jev, llm, profiles: loadProfiles("characters"), config: DEFAULT_CONFIG, log: (m) => logs.push(m) },
+    { store, clock, ai: () => ({ jev, llm }), profiles: loadProfiles("characters"), config: DEFAULT_CONFIG, log: (m) => logs.push(m) },
     () => adapter,
   );
   let seq = 0;

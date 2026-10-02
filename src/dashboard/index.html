@@ -289,14 +289,57 @@ function tokenPanel(id, k, state, platforms) {
   return box;
 }
 
+const AI_NOTES = {
+  LLM_BASE_URL: "OpenAI-compatible API, e.g. https://opencode.ai/zen/go/v1",
+  LLM_MODEL: "the model that writes replies and notes",
+  LLM_API_KEY: "key for that API",
+  LLM_STRUCTURED_MODE: "tool is safest; json_schema only if verified for the model",
+  TYPESAFE_API_KEY: "Jev, which decides when and how they reply",
+};
+
+/** Keys and models. `scope` is "default" (the global values) or a character id (their overrides). */
+function aiPanel(scope, ai) {
+  const own = scope !== "default";
+  const fs = h(`<fieldset><legend>${own ? "model &amp; keys" : "default model &amp; keys"}</legend>
+    <p class="muted" style="margin:0 0 6px">${own ? "Leave one unset to use the default from Settings." : "Used by every character that does not set its own."} Stored in <code>.env</code>, live on the next message; keys are never shown.</p>
+    <datalist id="models-${esc(scope)}"></datalist></fieldset>`);
+  for (const [v, s] of Object.entries(ai)) {
+    const hint = s.own ? (s.secret ? `set, ends ${s.own}` : "set") : s.effective ? `default: ${s.effective}` : "not set";
+    const field = v === "LLM_STRUCTURED_MODE"
+      ? `<select class="val"><option value="">${own ? "use default" : "tool (built-in default)"}</option>${["tool", "json_object", "json_schema"].map((o) => `<option ${s.own === o ? "selected" : ""}>${o}</option>`).join("")}</select>`
+      : `<input class="val" type="${s.secret ? "password" : "text"}" autocomplete="off" ${v === "LLM_MODEL" ? `list="models-${esc(scope)}"` : ""}
+          value="${s.secret ? "" : esc(s.own ?? "")}" placeholder="${esc(s.secret ? (s.own ? "paste a new key to replace it" : "paste the key") : s.effective ?? "")}">`;
+    const row = h(`<label class="field"><span>${esc(v.toLowerCase().replaceAll("_", " "))}<small>${esc(AI_NOTES[v])}</small><small><code>${esc(s.name)}</code> · ${esc(hint)}</small></span>
+      <div class="row" style="flex-wrap:nowrap">${field}<button type="button" class="primary set">Save</button>${s.own ? `<button type="button" class="${s.secret ? "danger" : ""} clear">${own ? "Use default" : "Unset"}</button>` : ""}</div></label>`);
+    const put = async (value) => {
+      try {
+        const r = await api("PUT", `/api/ai/${encodeURIComponent(scope)}/${v}`, { value });
+        fs.replaceWith(aiPanel(scope, r.ai));
+        toast(value === null ? `${v} unset.` : "Saved. Live on the next message.");
+      } catch (e) { toast(e.message); }
+    };
+    row.querySelector(".set").onclick = () => { const x = row.querySelector(".val").value.trim(); x ? put(x) : s.own ? put(null) : toast("Enter a value first."); };
+    const clear = row.querySelector(".clear");
+    if (clear) clear.onclick = () => ((own && !s.secret) || confirm(own ? `Remove ${s.name}?` : `Unset ${s.name}? Characters without their own go quiet.`)) && put(null);
+    fs.append(row);
+  }
+  // fill the model picker from the provider, when the base URL and key allow it
+  api("GET", `/api/ai/${encodeURIComponent(scope)}/models`).then((r) => {
+    fs.querySelector("datalist").replaceChildren(...r.models.map((id) => Object.assign(document.createElement("option"), { value: id })));
+  }).catch(() => {});
+  return fs;
+}
+
 async function character(id) {
   if (!enums.activity.length) enums = (await api("GET", "/api/overview")).enums;
-  const { profile, platforms } = await api("GET", `/api/characters/${encodeURIComponent(id)}`);
+  const { profile, platforms, ai } = await api("GET", `/api/characters/${encodeURIComponent(id)}`);
   const state = structuredClone(profile);
   const page = h(`<div><h1>${esc(profile.name)}</h1>
     <p class="sub">characters/ · <code>${esc(id)}</code> · changes apply on the next message</p>
+    <div id="ai"></div>
     <div id="form"></div>
     <div class="bar"><button class="primary" id="save">Save</button><button id="revert">Revert</button><span class="errors" id="err"></span></div></div>`);
+  page.querySelector("#ai").replaceWith(aiPanel(id, ai));
   const formBox = page.querySelector("#form");
   const opts = {
     enumFor: (p) => p[p.length - 1] === "basePace" ? enums.basePace : p[0] === "routine" && p[2] === "activity" ? enums.activity : p.join(".") === "speechStyle.language" ? ["en"] : null,
@@ -307,7 +350,7 @@ async function character(id) {
       if (p.join(".") !== "platforms") return null;
       const fs = h(`<fieldset><legend>platforms</legend><p class="muted" style="margin:0 0 6px">Give a character a token on both to have them on both. Changes go live straight away; tokens are stored in <code>.env</code> and never shown.</p></fieldset>`);
       for (const k of ["telegram", "discord"]) fs.append(tokenPanel(id, k, state, platforms));
-      return fs;      return fs;
+      return fs;
     },
   };
   const render = () => formBox.replaceChildren(buildForm(state, opts, render));
@@ -353,12 +396,14 @@ const CONFIG_NOTES = {
 };
 
 async function settings() {
-  const { config, defaults } = await api("GET", "/api/config");
+  const { config, defaults, ai } = await api("GET", "/api/config");
   const state = structuredClone(config);
   const page = h(`<div><h1>Settings</h1>
+    <div id="ai"></div>
     <p class="sub">Engine tuning, shared by every character. Saved to <code>mimic.config.json</code> and live on the next message. Highlighted = not the default.</p>
     <div id="form"></div>
     <div class="bar"><button class="primary" id="save">Save</button><button id="defaults">Reset all to defaults</button><span class="errors" id="err"></span></div></div>`);
+  page.querySelector("#ai").replaceWith(aiPanel("default", ai));
   const formBox = page.querySelector("#form");
   const opts = { noteFor: (p) => `${CONFIG_NOTES[p[p.length - 1]] ?? ""}${CONFIG_NOTES[p[p.length - 1]] ? " · " : ""}default ${getIn(defaults, p)}` };
   const render = () => {

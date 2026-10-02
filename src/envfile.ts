@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const NAME = /^[A-Z_][A-Z0-9_]*$/;
-/** Bot tokens are `123:AbC-_` (Telegram) or dotted base64 (Discord); nothing that needs quoting. */
-const VALUE = /^[A-Za-z0-9_.:\-]+$/;
+/** Tokens, keys, model names and URLs: nothing that needs quoting in a dotenv file. */
+const VALUE = /^[A-Za-z0-9_.:\/@+\-]+$/;
 
 /**
  * Set (or with `null`, remove) one `NAME=value` line in a dotenv file, leaving every other line —
@@ -10,7 +10,7 @@ const VALUE = /^[A-Za-z0-9_.:\-]+$/;
  */
 export function setEnvVar(path: string, env: NodeJS.ProcessEnv, name: string, value: string | null) {
   if (!NAME.test(name)) throw new Error(`env var name must be UPPER_SNAKE_CASE: ${name}`);
-  if (value !== null && !VALUE.test(value)) throw new Error("that does not look like a bot token");
+  if (value !== null && !VALUE.test(value)) throw new Error("that value has characters a .env file would need quoted (spaces, quotes, #, =)");
   const lines = existsSync(path) ? readFileSync(path, "utf8").split("\n") : [];
   const at = lines.findIndex((l) => new RegExp(`^\\s*(export\\s+)?${name}\\s*=`).test(l));
   if (value === null) {
