@@ -12,6 +12,12 @@ Conversation History ─► Context Store ─► Context Planner (Jev) ─► Co
                                         Interaction Manager ───────────┘
 ```
 
+**Status.** The *inputs* on the right are built; the planner on the left is not.
+What exists: the `examples` store (offline ingest, retrieved by `turn_emotion`),
+open threads on Conversation State, and a message window scoped to the current
+topic. What does not: `horizon`, `relevant_<id>`, `ContextItem[]` with budgets,
+and summaries. See §12 for why they are one piece of work and not four.
+
 ## 1. Context layers
 
 | Layer | Contents | Priority | Source |
@@ -109,17 +115,24 @@ rejected (§30.4).
 
 The brief asks which to use first (§30.13, §20). Recommendation, in order:
 
-1. **Manual + tag selection** (MVP). Examples and memories carry tags
-   (`scenario`, `topic`, `emotion`, `behavior`). Selection = filters on
-   character + current activity/topic.
-2. **Keyword/topic scoring** (Next, cheap). Rank topic summaries and memories by
-   term overlap with the current turn and topic. This solves the "PC history
-   drowning out the keyboard topic" problem via topic tags rather than
-   embeddings.
+1. **Manual + tag selection** (MVP). **Built**, with one tag: an exchange is
+   tagged `emotion` by Jev in batch at ingest, and a turn is tagged `emotion` by
+   the same question live, so selection is a filter on
+   `(characterId, emotion)` plus a seeded draw. `scenario` and the behaviour
+   tags are not built — nothing reads them until a turn carries a scenario, and
+   the ingest is idempotent and offline, so adding one later costs minutes.
+2. **Keyword/topic scoring** (Next, cheap). Not built. Rank topic summaries and
+   memories by term overlap with the current turn and topic.
 3. **Semantic retrieval** (Next). Only when keyword/topic recall is measurably
    insufficient.
 4. **Vector search** (Experimental). Only when corpus size and recall demands
    it. Not in the MVP.
+
+The "PC history drowning out the keyboard topic" problem that §2 names as the
+motivation for rungs 2–4 is **solved without either**: the message window is
+scoped to `topicStartedAt` (see §7), which is a lower bound on the same query
+rather than a ranking over it. Ranking becomes worth building when the window is
+right but the messages inside it are still the wrong ones.
 
 This honors §30.7 (topic-based retrieval before semantic) and the constraint to
 avoid premature vector databases (§26).
@@ -148,9 +161,21 @@ transcript CSV of the show, so nobody hand-writes example conversations.
    thousands of lines.
 5. Store as `Example { id, characterId, episode, lines[], tags[] }` in SQLite.
 
-**At reply time:** pick up to `maxExamples` (start: 3) whose emotion matches the
-turn's `turn_emotion`, preferring a matching scenario. Ties are broken with a
-seeded draw, so the same examples don't repeat every turn.
+**At reply time:** pick up to `maxExamples` (3) whose emotion matches the turn's
+`turn_emotion`, with a seeded draw so the same examples don't repeat every turn.
+The pool is the emotion bucket ordered by id and cut at `examplePool` (40), which
+keeps the read bounded and the draw reproducible: the same generation seed always
+selects the same examples, so a surprising reply can be explained.
+
+**What the file actually contains.** The transcription interleaves narration with
+speech — `stumbles in drunkenly, and turns on the lights. Morty! You gotta come
+on.` — plus HTML fragments, parenthetical asides and a leading `:` where the
+speaker was split from the line. All of it is written lowercase, and the spoken
+part is the longest run of consecutive sentences that isn't. `spokenText` keeps
+only that run, and never empties a line: a short all-lowercase line is speech the
+rule cannot read, and losing it is worse than keeping one stray direction. This
+matters because the direction the model would otherwise learn is the one thing
+the prompt bans twice and `humanize` strips.
 
 **Voice vs format.** Show lines are *spoken, multi-party* dialogue, not text
 messages. Examples teach **voice**: vocabulary, attitude, catchphrases, how
@@ -239,3 +264,47 @@ Rule: **the reply must never fail because optional context failed.**
 - **Jev interaction**: Jev picks horizon and candidate inclusion only.
 - **LLM contract**: receives ordered, budgeted `ContextItem[]`; controls none of
   timing, cancellation, or budgeting.
+
+## 12. Notes from the context pass
+
+What shipped, what did not, and what brings the rest back.
+
+**Shipped.**
+
+- `examples` — a table, an offline ingest (`npm run ingest`), a `turn_emotion`
+  question, and seeded selection. 800 examples across the two shipped
+  characters, tagged by Jev, 0 failed batches.
+- **Open threads** — `opens_thread` → `LLMOutput.openThread` → the
+  `conversations.unresolved` column → back into Jev's state and the prompt when
+  Jev chooses `topic_action: "ask"`. The stored list is the open set: an item is
+  removed once the reply that asked about it was generated, and expires after 7
+  days if nobody asked. That is what makes "the reply must never fail because
+  optional context failed" true here as well — a failed generation leaves every
+  thread open, because nothing was asked.
+- **The topic-scoped window** — §7 with no planner in front of it. `recent_topic`
+  is the default whenever a topic is active, with a floor of `minRecentMessages`
+  (6) below which it falls back to the ordinary recent window. The floor is the
+  whole point: a topic raised one message ago would otherwise return a single
+  message and blank out the conversation the character is replying into, which is
+  a worse failure than the crowding the scope exists to fix.
+
+**Not shipped, and why together.**
+
+Doc 05's §2 planner, §4 budget, §5 rungs 2–4, and summaries are one piece of
+work rather than four. Candidates are summaries; `horizon` chooses among
+candidate sets that do not exist; `relevant_<id>` votes on candidates that do not
+exist; the budget trims a `ContextItem[]` that has nothing in it but raw messages
+a store query already bounds. Build the summarizer first, and the rest has
+something to be about.
+
+The trigger is specific: **the first time the raw window is measurably wrong** —
+a conversation long enough that `recentMessages` truncates the topic, or a user
+who has to repeat something they said days ago. Until then every question the
+planner would ask has one answer, and a question with one answer is not a
+judgement.
+
+**Still open.** the example buckets for `neutral` and `sad` are thin (3–5 each
+against 213 `joking` for Rick), because Jev rarely calls an exchange neutral. A
+turn Jev calls neutral therefore draws from a small pool. If that turns out to
+sound wrong, the fix is at ingest — ask for a second tag, or rebalance — not at
+retrieval.

@@ -32,8 +32,8 @@ type JevState = {
   recentMessages: { from: "user" | "bot"; text: string }[]   // short window
   currentTurn: string[]                   // the buffered user turn
   pendingBots: { id: string; text: string }[]
-  unresolved: { id: string; summary: string }[]
-  contextCandidates: { id: string; summary: string }[]       // capped, e.g. 20
+  unresolved: { id: string; summary: string }[]              // open threads, pruned and capped
+  contextCandidates: { id: string; summary: string }[]       // capped, e.g. 20 — no producer yet
 }
 ```
 
@@ -61,23 +61,29 @@ all day" instead of guessing from the words alone.
 | `message_length` | Choice | `terse`, `short`, `normal`, `long` | per-message character budget |
 | `ask_question` | Noul | "the reply should ask the user something" | `askQuestion` |
 | `importance` | Score | trivial → urgent (4 levels) | `attentionRaise` |
-| `opens_thread` | Noul | "user mentioned something worth asking about later" | unresolved item |
+| `opens_thread` | Noul | "the user mentioned something concrete and still open" | unresolved item |
 | `horizon` | Choice | `current_turn`, `recent`, `recent_topic`, `current_conversation`, `long_term` | `contextPlan.horizon` |
 | `pending_<id>` | Choice, one per pending msg | `continue`, `cancel`, `delay`, `replace` | `pendingActions` |
 | `relevant_<id>` | Noul, one per candidate | "relevant to the current turn" | `contextPlan.include` |
-| `turn_emotion` | Choice | `neutral`, `excited`, `annoyed`, `sad`, `confused`, `joking`, `serious` (same set as example tags) | example selection (doc 05 §5.1) |
+| `turn_emotion` | Choice | `neutral`, `excited`, `annoyed`, `sad`, `confused`, `joking`, `serious` (same set as example tags) | example selection (doc 05 §5.1). Asked on `user_turn` only — a follow-up has no user message to read a register from |
 | `mood` | Choice | `neutral`, `happy`, `tired`, `annoyed`, `excited`, `distracted` | `mood` |
 
 Questions are added only when they apply: no `pending_*` without pending
-messages, no `topic_action` on a `followup_due` trigger, and no `mood` outside a
-`user_turn` — the decision reads an answer only on a trigger that asked for it.
+messages, no `topic_action` on a `followup_due` trigger, and no `mood`,
+`turn_emotion` or `opens_thread` outside a `user_turn` — the decision reads an
+answer only on a trigger that asked for it.
+
+`opens_thread` carries the same hazard `follow_up` did (below), so it has its own
+`openThreadThreshold`: it asks about a rare event and the model scores it low on
+the shared scale. It starts at `follow_up`'s 0.6 rather than at the shared 0.7,
+and `MIMIC_OPEN_THREAD_THRESHOLD` tunes it from a live measurement.
 
 ### The triggers
 
 | Trigger | Asked | What it does |
 |---|---|---|
 | `user_turn` | everything above | the normal turn |
-| `followup_due` | everything except `topic_action` and `mood` | the character messaging again on their own |
+| `followup_due` | everything except `topic_action`, `mood`, `turn_emotion` and `opens_thread` | the character messaging again on their own |
 | `activity_changed` | `pace`, `pending_<id>` | **what is already queued is re-decided; nothing is written.** No reply-shaping question is asked, because no reply is being written, and `decide` pins `respondMode` to `no_reply` so the LLM is never reached |
 
 `mood` is a `Choice` over the six levels, and the *gate* is what keeps it
@@ -97,6 +103,7 @@ type BehaviorDecision = {
   messageCount: 1 | 2 | 3
   askQuestion: boolean
   attentionRaise?: number           // importance score mapped to 0..1
+  emotion?: Emotion                 // the register of the user's turn; picks the examples
   openThread: boolean               // LLM writes the summary (see §2)
   mood?: Mood
   pendingActions: { messageId: string; action: "continue" | "cancel" | "delay" | "replace" }[]

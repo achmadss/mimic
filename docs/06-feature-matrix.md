@@ -27,10 +27,11 @@ Every feature from `DOC.md` §2. Layer codes: **Sys** = System, **Jev**,
 | 2.20 | Social state (energy etc.) | Yes | — | — | (drop) | Low | Low | Probably unnecessary |
 | 2.21 | Mood | Yes | Jev | LLM prompt | Expires on a 45 min TTL | Low | Med | Built (deliberately small) |
 | 2.22 | Character personality | Yes | Sys (profile) | LLM | Config | Low | High | MVP |
-| 2.23 | Example conversations | Yes | Sys (retrieval) | LLM | Context store | Med | Med | MVP (tag/manual), Next (keyword) |
+| 2.23 | Example conversations | Yes | Sys (retrieval) | LLM | Context store | Med | Med | Built (emotion tag), Next (keyword) |
 | 2.24 | Character quirks | Yes | LLM | Sys (seeded tendency) | Profile `quirks` + prompt | Low | Med | Built (repeats suppressed) |
 | 2.25 | User behavior modeling | Yes | Sys (derived) | Jev | Event Log projection | Med | Med | Experimental |
 | 2.26 | Relationship state | Yes | Sys (persist) | Jev + LLM | Memory/conversation state | Med | Med | Next |
+| 2.30 | Unresolved threads | Yes | Jev | LLM + Sys | `ConversationState.unresolved` | Low | Med | Built (one JSON column) |
 | 2.27 | Typing/presence indicators | Yes | Sys | — | View of a scheduled message's `dueAt` | Low | Med | Built |
 | 2.28 | Stale response detection | Yes | Sys | — | conversationVersion | Low | High | MVP |
 | 2.29 | Event-driven architecture | Yes | Sys | — | Event Log + serial queue | Low | High | MVP (in-process only) |
@@ -72,7 +73,16 @@ of decaying or interacting with anything. Nothing in the timing path reads it.
 
 ### 2.23 / 30.13 Examples — retrieve this way
 
-Manual → tags → keyword/topic scoring → semantic → vector. Ship the first two.
+Manual → tags → keyword/topic scoring → semantic → vector.
+
+**Built:** rung 1, with one tag. `scripts/ingest-transcripts.ts` cuts exchanges
+out of the show transcript, Jev tags each with an `emotion` in batch, and a turn
+is tagged by the same question (`turn_emotion`) so selection is a filter on
+`(characterId, emotion)` plus a seeded draw. **Not built:** the scenario and
+behaviour tags, and rungs 2–4 — see doc 05 §11.
+What the ingest has to fix up in the source file is in doc 05 §5.1: the
+transcription writes narration lowercase and interleaves it with the speech, and
+a model taught that narration is what a character does will start narrating.
 
 ### 2.25 User behavior modeling — derived, not stored
 

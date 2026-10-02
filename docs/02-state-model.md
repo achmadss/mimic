@@ -55,7 +55,6 @@ type UnresolvedItem = {
   id: string
   summary: string
   raisedAt: number
-  status: "open" | "resolved"
 }
 ```
 
@@ -67,7 +66,12 @@ type UnresolvedItem = {
   character can be in several conversations at once and each one is serialized
   separately.
 - `unresolved` — small list of open threads (interview tomorrow, waiting on a
-  reply). Feeds context planning and Jev.
+  reply). Feeds context planning and Jev. It is one JSON column, not a table: at
+  most `unresolvedMax` (5) short strings, replaced wholesale on the turn that
+  changes it. **The stored list is the open set.** An item is *removed* once the
+  reply that asked about it was actually generated, so there is no `status` to
+  write and never read, and an item nobody asked about for `unresolvedTtlMs`
+  (7 days) expires unasked. Task 2 of the context plan holds both rules.
 
 ### TurnBuffer (per conversation)
 
@@ -257,6 +261,8 @@ stored value; it is a Jev judgement computed when needed.
 | conversation version | Interaction Mgr | USER_TURN_READY | Interaction Mgr (send gate) | yes | no | no | no | no | bump |
 | user behavior | derived | — | Jev | optional | yes | maybe | no | yes | new messages |
 | memory | summarizer | summarizer | context builder | yes | no | sees summary | sees retrieved items | yes | new summaries |
+| examples | ingest script | ingest script | context builder | yes | no | no | sees the retrieved lines | no | re-ingest |
+| unresolved | Interaction Mgr (Jev + LLM) | Interaction Mgr | Jev, LLM | yes | no | sees summaries | sees the ones it is asked about | yes | asked / expired |
 | mood | Jev | Jev | LLM (voice) | optional | no | maybe | yes | yes | time/mood change |
 | routine | config + engine | Routine Engine | engine | yes | no | yes (via activity) | yes (context) | no | schedule |
 
@@ -269,5 +275,6 @@ stored value; it is a Jev judgement computed when needed.
 - `order` — preserves the intended sequence of a split thought.
 - `attention` — lets one important message override an activity baseline.
 - `unresolved` — lets the bot "remember" to ask how the interview went.
+- `examples` — real dialogue, so the character has a voice and not just a description. Offline content: written once by the ingest, read by `(characterId, emotion)`.
 
 No field is present "because it sounds useful".
