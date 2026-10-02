@@ -95,6 +95,7 @@ export class AdapterRegistry {
       this.errors.delete(k);
       if (!want) continue;
       const adapter = this.o.create(platform, want);
+      this.o.log(`${characterId} starting on ${platform}`);
       try {
         await adapter.start((m) => this.o.receive(characterId, platform, m));
       } catch (e) {

@@ -12,6 +12,7 @@ import { DiscordAdapter } from "./delivery/discord.ts";
 import { TelegramAdapter } from "./delivery/telegram.ts";
 import { InteractionManager } from "./im/manager.ts";
 import { Store } from "./store.ts";
+import { format } from "node:util";
 
 /** Optional env overrides, so tuning a running character doesn't mean editing source. */
 function configFromEnv(): Config {
@@ -25,6 +26,20 @@ function configFromEnv(): Config {
 }
 
 const store = new Store(openDb(process.env.DB_PATH || "data/mimic.db"));
+// every line the app prints (ours, grammY's, discord.js's) also goes to the dashboard's System log
+for (const level of ["log", "warn", "error"] as const) {
+  const print = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    print(...args);
+    try {
+      // everything here prints through console.error; it is an error when there is one to show
+      const kind = args.some((a) => a instanceof Error) ? "ERROR" : level === "warn" ? "WARN" : "LOG";
+      store.appendEvent("system", Date.now(), kind, { text: format(...args) });
+    } catch {
+      /* a full disk must not take the app down with it */
+    }
+  };
+}
 const CHARACTERS_DIR = process.env.MIMIC_CHARACTERS ?? "characters";
 const profiles = loadProfiles(CHARACTERS_DIR);
 const log = (m: string, e?: unknown) => console.error(`[mimic] ${m}`, e ?? "");

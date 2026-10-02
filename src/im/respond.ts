@@ -99,7 +99,10 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
       openThreads: open,
       them,
     });
-    answers = await d.ai(conv.characterId).jev.ask(state, buildQuestions(trigger, pending, open));
+    const questions = buildQuestions(trigger, pending, open);
+    // the whole exchange, so the dashboard log shows exactly what Jev saw and was asked
+    store.appendEvent(conversationId, now, "JEV_ASKED", { state, questions });
+    answers = await d.ai(conv.characterId).jev.ask(state, questions);
   } catch (e) {
     d.log("jev unavailable, using defaults", e);
     store.appendEvent(conversationId, clock.now(), "JEV_FAILED", { error: String(e), using: "defaults" });
@@ -150,19 +153,18 @@ export async function respond(d: Deps, conversationId: string, trigger: Trigger,
     elsewhere: otherChats.length,
   });
 
-  let output: LLMOutput;
-  try {
-    output = await d.ai(conv.characterId).llm.generate(
-      buildPrompt({
+  const prompt = buildPrompt({
         profile, decision, trigger, activity, mood, localTime, topic: conv.topic, recent, turn: texts,
         keptPending: kept.map((m) => m.text), styles, examples, askAbout: asking.map((t) => t.summary),
         them: describeAcquaintance(them, now),
         facts: remembered.facts.map((m) => m.text),
         earlier: remembered.summaries.map((m) => m.text),
-        elsewhere: otherChats,
-      }),
-      { sessionId: sessionIdFor(conversationId) },
-    );
+    elsewhere: otherChats,
+  });
+  store.appendEvent(conversationId, now, "LLM_PROMPT", { messages: prompt });
+  let output: LLMOutput;
+  try {
+    output = await d.ai(conv.characterId).llm.generate(prompt, { sessionId: sessionIdFor(conversationId) });
   } catch (e) {
     // A thread is consumed by being asked, and nothing was asked: the list is left untouched.
     d.log("llm failed; staying silent", e);

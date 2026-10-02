@@ -127,6 +127,10 @@ async function route(d: DashboardDeps, method: string, path: string, body: unkno
     return { profile: p, platforms: platformsOf(p, d), ai: aiStatus(get(d), p.characterId) };
   }
 
+  if (method === "GET" && path === "/api/logs/system") {
+    return { people: [], events: d.store.characterEvents("", "system", 200, Number(query.get("before")) || undefined) };
+  }
+
   if (method === "GET" && (m = path.match(/^\/api\/characters\/([a-z0-9_]+)\/logs$/))) {
     const id = m[1];
     if (!d.profiles.has(id)) throw new HttpError(404, "no such character");

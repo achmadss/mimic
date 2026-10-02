@@ -42,6 +42,7 @@
   .log summary { cursor: pointer; display: grid; grid-template-columns: 13em 11em 1fr; gap: 10px; align-items: baseline; }
   .log summary .what { overflow-wrap: anywhere; }
   .log .bad b { color: var(--bad); }
+  .log pre { white-space: pre-wrap; max-height: 60vh; overflow: auto; }
   @media (max-width: 700px) { .log summary { grid-template-columns: 1fr; gap: 0; } }
   .stat { font-size: 26px; font-weight: 650; }
   button { white-space: nowrap; font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
@@ -521,7 +522,7 @@ async function conversation(id) {
 
 /* ---------- logs: everything that happened with a character, per person ---------- */
 
-const FAILED = new Set(["JEV_FAILED", "LLM_GENERATION_FAILED", "DELIVERY_FAILED", "HANDLER_FAILED", "COMMAND_REPLY_FAILED", "PLATFORM_FAILED"]);
+const FAILED = new Set(["ERROR", "JEV_FAILED", "LLM_GENERATION_FAILED", "DELIVERY_FAILED", "HANDLER_FAILED", "COMMAND_REPLY_FAILED", "PLATFORM_FAILED"]);
 const quote = (t) => `“${String(t ?? "").slice(0, 160)}”`;
 const clock = (at) => new Date(at).toLocaleTimeString();
 // one readable line per event; the raw payload is one click away
@@ -551,25 +552,32 @@ function describe(e) {
     case "PLATFORM_STOPPED": return `stopped on ${p.platform}`;
     case "PLATFORM_FAILED": return `could not start on ${p.platform}: ${p.error}`;
     case "MEMORY_WRITTEN": return `wrote notes: ${quote(p.summary)}`;
+    case "JEV_ASKED": return `asked Jev ${Object.keys(p.questions).length} questions: ${Object.keys(p.questions).join(", ")}`;
+    case "LLM_PROMPT": return `sent the LLM a ${p.messages.reduce((n, m) => n + String(m.content).length, 0)}-character prompt`;
+    case "LOG": case "WARN": case "ERROR": return p.text;
     default: return JSON.stringify(p).slice(0, 200);
   }
 }
 
+// a prompt reads as the messages it is, not as escaped JSON
+const detail = (e) => e.type === "LLM_PROMPT" ? e.payload.messages.map((m) => `── ${m.role} ──\n${m.content}`).join("\n\n")
+  : ["LOG", "WARN", "ERROR"].includes(e.type) ? e.payload.text : JSON.stringify(e.payload, null, 2);
+
 async function logs(characterId, chat) {
   const chars = (await api("GET", "/api/overview")).characters;
-  characterId ||= chars[0]?.id;
-  if (!characterId) return $main.replaceChildren(h(`<div><h1>Logs</h1><p class="muted">No characters yet.</p></div>`));
-  const q = (before) => `/api/characters/${characterId}/logs?${new URLSearchParams({ ...(chat ? { c: chat } : {}), ...(before ? { before } : {}) })}`;
+  characterId ||= chars[0]?.id ?? "system";
+  const system = characterId === "system";
+  const q = (before) => `${system ? "/api/logs/system" : `/api/characters/${characterId}/logs`}?${new URLSearchParams({ ...(chat ? { c: chat } : {}), ...(before ? { before } : {}) })}`;
   const data = await api("GET", q());
   const who = Object.fromEntries(data.people.map((p) => [p.id, `${p.name ?? p.chatId} · ${p.platform}`]));
   const rows = (events) => events.map((e) => `<details class="${FAILED.has(e.type) ? "bad" : ""}"><summary>
-      <span class="muted">${when(e.at)}</span><span>${e.conversationId.startsWith("character:") ? `<span class="muted">${esc(characterId)}</span>` : esc(who[e.conversationId] ?? e.conversationId)}</span>
-      <span class="what"><b>${esc(e.type.toLowerCase().replaceAll("_", " "))}</b> ${esc(describe(e))}</span></summary><pre>${esc(JSON.stringify(e.payload, null, 2))}</pre></details>`).join("");
+      <span class="muted">${when(e.at)}</span><span>${e.conversationId.startsWith("character:") || system ? `<span class="muted">${esc(system ? "app" : characterId)}</span>` : esc(who[e.conversationId] ?? e.conversationId)}</span>
+      <span class="what"><b>${esc(e.type.toLowerCase().replaceAll("_", " "))}</b> ${esc(describe(e))}</span></summary><pre>${esc(detail(e))}</pre></details>`).join("");
   const page = h(`<div>
     <h1>Logs</h1><p class="sub">Everything that happened between a character and the people they talk to, newest first. Failures are red; click a line for the details.</p>
     <div class="row" style="margin-bottom:12px">
-      <select id="char" style="width:auto">${chars.map((c) => `<option value="${esc(c.id)}" ${c.id === characterId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
-      <select id="person" style="width:auto"><option value="">everyone</option>${data.people.map((p) => `<option value="${esc(p.id)}" ${p.id === chat ? "selected" : ""}>${esc(p.name ?? p.chatId)} · ${esc(p.platform)} (${p.messages} messages)</option>`).join("")}</select>
+      <select id="char" style="width:auto">${chars.map((c) => `<option value="${esc(c.id)}" ${c.id === characterId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}<option value="system" ${system ? "selected" : ""}>System (app output)</option></select>
+      <select id="person" style="width:auto" ${system ? "hidden" : ""}><option value="">everyone</option>${data.people.map((p) => `<option value="${esc(p.id)}" ${p.id === chat ? "selected" : ""}>${esc(p.name ?? p.chatId)} · ${esc(p.platform)} (${p.messages} messages)</option>`).join("")}</select>
       <button id="refresh">Refresh</button>
       ${chat ? `<a href="#/conversations/${encodeURIComponent(chat)}">open chat</a>` : ""}
     </div>
